@@ -13,13 +13,13 @@ real client as the renderer — the approach proven by
 | LocalExile baseline clone | done (depth 1, upstream main) |
 | .NET 10 SDK | installed via winget |
 | `dotnet build GameServer.slnx -c Release` | **passes** |
-| `dotnet test tests/GameServer.Core.Tests` | **449/449 pass** |
+| `dotnet test tests/GameServer.Core.Tests` | **452/452 pass** |
 | PoE2 client recon (login crypto) | **done — see findings** |
 | PoE2 client recon (DH groups) | **done** — groups unchanged (finding 5) |
 | PoE2 client recon (login key blobs) | **done** — all three mapped (findings 4, 6, 7) |
 | Login handshake vs patched real client | **done** — client accepts our signed `0x0002`, C→S decrypts (wave 3) |
 | PoE2 login message set | in progress — `0x04`/`0x05`/`0x0e`/`0x10`/`0x14`/`0x15`/`0x16`/`0x18` mapped; Play reaches the instance server (wave 6) |
-| PoE2 gateway/instance protocol | started — client opening mapped (wave 7); the server's answer is unverified |
+| PoE2 gateway/instance protocol | in progress — opening, encryption switch and area message work live; client generates the area and waits on the loading screen (wave 8) |
 
 ## Recon findings (2026-10-30, client build of 2026-10-08 install)
 
@@ -394,7 +394,65 @@ maps to is an open design choice.
 Code: `InstanceOpeningPoe2` (`TryRead`, `Length` = 29) next to
 `InstanceProtocol`; `InstanceOpeningPoe2Tests`.
 
-Next: map PoE2's instance S→C dispatcher (PoE1: the vtable at `this+8`,
+Next (done in wave 8): map PoE2's instance S→C dispatcher (PoE1: the vtable at `this+8`,
 slot 0), especially the `0x11` case (which Salsa20 pair it installs, and
 from which key bytes) and the area message (PoE1 `0x1d`). Then retry the
 probe.
+
+## Wave 8 — instance dispatcher, encryption switch and area message (2026-11-03)
+
+- **Dispatcher.** The instance S→C dispatcher is `0x1421220f0`, found through
+  its log strings. It reads the id from `msg+8`; ids above `0x12f` take a
+  separate path. Otherwise `id - 0xd` indexes a byte table at `0x14212593c`
+  and then dword targets at `0x1421258bc`.
+  - Ids with their own case: `0x0d, 0x11, 0x18–0x1a, 0x1d–0x25, 0x28, 0x29,
+    0x5a, 0x6b, 0x6d, 0xa5, 0xa6, 0xb2–0xb4, 0xc6, 0xc7, 0xca, 0xce, 0xdc,
+    0xeb, 0x100`. The other 213 ids go to the default.
+- **`0x11`** (case `0x1421221be`) switches to encryption as in PoE1, with
+  two changes.
+  - **It now carries one byte.** After a bare `00 11` the client took our
+    first encrypted byte as that field and decrypted from the second.
+    - It then reported "Unable to deserialise packet with pid 6628. Last PID
+      was 17" (and pid 40109 on a second run, with another key).
+    - Re-encrypting our bytes offline with the logged keys reproduces both
+      pids exactly at that one-byte offset, and no other offset or key
+      variant matches.
+    - We send `00 11 00`. The case itself only uses constants.
+  - **The keying is unchanged.** The cipher pair comes from `0x14219f500(info
+    + 0x38, flag 1)`, the same constructor and flag the login connection
+    uses (`0x1420e8388`). `info + 0x38` is a raw copy of the 0x14 key: login
+    dispatch `0x1420e91dd` copies `msg+0x3c` to it, and Data8 follows at
+    `+0x78`. So `InstanceKeyring.Ciphers(ticket)` works as is.
+  - The side channel (`0x14212ac80` → `0x1421c52f0`) is PoE1's HNC: the key
+    XORed with the 64 bytes at `0x142f10980`, then the same six byte swaps.
+- **The area message moved from `0x1d` to `0x1e`** (class `0x1435079d8`,
+  write `0x14211cb00`, read `0x14211d340`, case `0x14212269f`, which logs
+  "Client-Safe Instance ID" and "Generating level").
+  - PoE2's `0x1d` handler compares a u16 at `+0x18` with clocks, so it is
+    probably PoE1's `0x1c` pong, shifted by one.
+  - **Layout:** PoE1's `AreaInstance` fields keep their wire order, with
+    struct offsets 0xc higher. New fields:
+    - a u8 (`+0x10`) first;
+    - a u32 (`+0x24`) after the old `B28`;
+    - a u16 (`+0x1e`) when flag `+0x2d` bit 3 is set;
+    - two lists at the end: a u8 count of 8-byte items (`+0x100`) and a
+      vec16<u16> (`+0x118`).
+  - League stats are now behind flag `+0x2d` bit 7. Terrain and three lists
+    are behind `+0x2e` bits 0–3.
+- **Live, 2026-11-03:** we sent `00 11 00`, then `AreaInstancePoe2(id 1,
+  0x3f70, seed 1, level 0)` encrypted with `InstanceKeyring.Ciphers(1)`.
+  - The client logged **"Client-Safe Instance ID = 1"** and **"Generating
+    level 15 area "G1_town" with seed 1"**.
+  - It then sent its first encrypted message, which decrypts to a sane id:
+    `009A 003533F5 D53A64F181` (11 bytes). This is probably PoE1's `0x7d`
+    "area generated", but its layout is not mapped.
+  - The client stays on the Clearfell Encampment loading screen. The server
+    still has to send the player and enter-area messages (PoE1: `0x22` +
+    `0x2b9`, then `0x21`).
+
+Code: `InstanceProtocolPoe2.StartEncryption`, `AreaInstancePoe2` (id
+`0x1e`, flag-gated parts off), tests in `InstanceOpeningPoe2Tests`.
+
+Next: map C→S `0x9a`, then find PoE2's ids and layouts for the local player
+entity and enter area (dispatcher cases `0x22`/`0x23`/`0x24` are the
+likely shifted ones), and get past the loading screen.
