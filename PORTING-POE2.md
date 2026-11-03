@@ -17,6 +17,8 @@ real client as the renderer — the approach proven by
 | PoE2 client recon (login crypto) | **done — see findings** |
 | PoE2 client recon (DH groups) | **done** — groups unchanged (finding 5) |
 | PoE2 client recon (login key blobs) | **done** — all three mapped (findings 4, 6, 7) |
+| Login handshake vs patched real client | **done** — client accepts our signed `0x0002`, C→S decrypts (wave 3) |
+| PoE2 login message set | started — `0x05` token login moved its blob first (wave 3) |
 | PoE2 gateway/instance protocol | not started |
 
 ## Recon findings (2026-10-30, client build of 2026-10-08 install)
@@ -81,10 +83,9 @@ real client as the renderer — the approach proven by
 
 **Implication:** the login-stack port is now close to mechanical: identical
 crypto family, identical DH groups, identical key blobs (the server static
-public moved), DER-prefix locator unchanged. Open items: confirming the
-handshake against the patched real client, the Salsa20 key-material layout
-(`km = SHA-512(Z_static || Z_ephemeral)`, IV split), and the per-version
-packet/message set.
+public moved), DER-prefix locator unchanged. The handshake against the
+patched real client and the Salsa20 key-material layout are now confirmed
+(wave 3); the open item is the per-version packet/message set.
 
 ## Next waves (in order)
 
@@ -171,6 +172,47 @@ is unchanged.
 concrete deliverable is a *real* S→C `0x0002`. Both inputs are now mapped
 (`ClientLayout.Poe2`): `GameServer.Auth keygen` reads the client static
 private and the DSA domain, and `patch` swaps the verify key `y` and the
-server static public at SPKI-0x180. Next: patch a copy of the exe, serve the
-login with those keys, and check that the client's first encrypted message
-decrypts.
+server static public at SPKI-0x180. Wave 3 does exactly that.
+
+## Wave 3 — handshake accepted by the patched client (2026-11-03)
+
+Setup: `GameServer.Auth keygen` + `patch` on the PoE2 exe (636 bytes differ, all inside
+the server static public at SPKI-0x180 and the DSA `y`), a small harness that
+answers the client's `0x0002` with the repo's unchanged `ServerHandshake` and
+decrypts everything the client sends next with the resulting ciphers.
+Redirect: hosts maps `mel.login.pathofexile2.com` to 127.0.0.1 and
+`gateway_id=Australia`, so the client dials port 21265 (no `gateway_list.txt`
+edit needed).
+
+Launching the patched copy: the Steam launcher stub (`PathOfExile_x64Steam.exe`)
+checks GGG's Authenticode signature, so run the patched copy directly from the
+install dir with `--nopatch`. Without `SteamAppId=2694490` (and
+`SteamGameId`) in the environment the client quits before
+`Steam is loaded!`; with them it starts normally.
+
+Result (client build `d46f4c27…`, `poe2_production/tags/0.5.5e`, revision 326410):
+
+- The client connects at the login screen, sends its 134-byte `0x0002`, and
+  **accepts the locally signed S→C `0x0002`** (190 B) — it carries on instead
+  of going silent as it did with the dummy reply in wave 2.
+- **C→S decrypts with the PoE1 key derivation unchanged.** The proof is the
+  heartbeat: after the first message the client sends a 2-byte message every
+  10 s, and every one decrypts to `0001` (the field-less `0x01` that PoE1
+  already lists, probably a keepalive). A wrong key or IV split would give
+  random bytes.
+- **First message is `0x05` (token login, the Steam path), with a PoE2
+  layout change.** 229 bytes: `0005 | 009F | <159-byte token> | 66 bytes`.
+  PoE1's `0x05` (`TokenLogin`, [re/009](Agents/docs/re/009-login-messages.md))
+  is `u8 realm|0x40, bytes[32] id B, bytes[32] id A, u8, blob token`, i.e. the
+  blob comes last; in PoE2 the u16-length blob comes **first**, and its length
+  matches the rest of the message exactly. The trailing 66 bytes are the same
+  size as PoE1's fixed fields and start with `0x57` (0x40 bit set, like
+  `realm|0x40`), so they are probably the same fields in the old order — not
+  yet checked against the PoE2 writer.
+- No credentials are needed: on Steam the client logs in with the ticket by
+  itself. Next deliverable: the client's reader for S→C `0x04`
+  (`LoginResult`) on PoE2, so the server can answer the `0x05`, and a
+  `TokenLogin` reader keyed by client layout.
+
+Don't commit the harness log: the token is a live Steam session ticket and
+ids A/B identify the machine.
