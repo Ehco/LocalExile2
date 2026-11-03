@@ -70,6 +70,67 @@ public class DirectionWalkTests
         Assert.Equal((10, 0), walk.Cell(1));
     }
 
+    // Open ground for x < 10, a wall from x = 10 on.
+    static bool WestOfWall(int x, int y) => x < 10;
+
+    [Fact]
+    public void A_wall_stops_a_walk_into_it()
+    {
+        var walk = new DirectionWalk(5, 5, speed: 10, walkable: WestOfWall);
+
+        walk.Turn(180, 0, 0);
+
+        Assert.Equal((9, 5), walk.Cell(3));
+    }
+
+    [Fact]
+    public void A_diagonal_walk_slides_along_a_wall_at_full_speed()
+    {
+        var walk = new DirectionWalk(5, 5, speed: 10, walkable: WestOfWall);
+
+        walk.Turn(127, -127, 0);
+
+        // About 6.3 cells along the diagonal to reach the wall (x 5.5 → 9.8, y 5.5 → 1.2), then the rest of the 20
+        // cells along y: y ≈ 1.2 − 13.7.
+        var (x, y) = walk.Cell(2);
+        Assert.Equal(9, x);
+        Assert.Equal(-13, y);
+    }
+
+    [Fact]
+    public void A_diagonal_walk_does_not_slip_between_two_blocked_cells()
+    {
+        // A checkerboard corner: (5, 5) and (6, 6) open, (6, 5) and (5, 6) blocked, everything else open.
+        var walk = new DirectionWalk(5, 5, speed: 10,
+            walkable: (x, y) => (x, y) is not ((6, 5) or (5, 6)));
+
+        walk.Turn(127, 127, 0);
+
+        Assert.Equal((5, 5), walk.Cell(1));
+    }
+
+    [Fact]
+    public void A_walk_away_from_the_wall_is_free()
+    {
+        var walk = new DirectionWalk(9, 5, speed: 10, walkable: WestOfWall);
+
+        walk.Turn(-180, 0, 0);
+
+        Assert.Equal((-1, 5), walk.Cell(1));
+    }
+
+    [Fact]
+    public void A_walker_off_the_walkable_ground_walks_freely_until_it_is_back()
+    {
+        var walk = new DirectionWalk(20, 5, speed: 10, walkable: WestOfWall);
+
+        walk.Turn(-180, 0, 0);
+        Assert.Equal((5, 5), walk.Cell(1.5));
+
+        walk.Turn(180, 0, 1.5);
+        Assert.Equal((9, 5), walk.Cell(3));
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(-1)]

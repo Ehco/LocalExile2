@@ -14,9 +14,16 @@ public sealed class InstanceSessionPoe2
     public const string DefaultObjectType = "Metadata/Characters/Int/IntFour";
     public const byte FrameMs = 33;
 
-    /// <summary>A cell inside Clearfell Encampment (G1_town) where the player stood live; the server has no PoE2 area
-    /// layouts to pick a spawn from yet.</summary>
-    public static readonly (int X, int Y) G1TownSpawn = (200, 200);
+    /// <summary>The middle of Clearfell Encampment (G1_town): the walkable cell farthest from any blocked one in the
+    /// client's walk map (43 cells, captured 2026-11-03), like PoE1's town spawns. The server has no PoE2 area
+    /// layouts to read a start point from yet.</summary>
+    public static readonly (int X, int Y) G1TownSpawn = (296, 262);
+
+    /// <summary>Whether the PoE2 player walks on a cell of a walk map (1 byte per cell, row by row): on any value from 1.
+    /// PoE1's player needs 2 (its size 1 + 1); live 2026-11-03 the PoE2 player stood on 1s (56 of 230 samples) and
+    /// never on a 0, and a held walk stopped where the 1s end.</summary>
+    public static Func<int, int, bool> Walkable(byte[] cells, int width, int height) =>
+        (x, y) => x >= 0 && y >= 0 && x < width && y < height && cells[y * width + x] >= 1;
 
     // C→S messages of a fixed length (id included), from live captures (2026-11-03). 0x63 is parsed; any other id stops
     // the split, as the stream has no length prefix.
@@ -29,11 +36,13 @@ public sealed class InstanceSessionPoe2
     private readonly PlayerObjectPoe2 _player;
     private readonly string _objectType;
 
+    /// <param name="walkable">The area's walkability (cells the client walks on), when the server has its walk map;
+    /// without it the walk estimate goes through walls.</param>
     public InstanceSessionPoe2(PlayerObjectPoe2 player, string objectType = DefaultObjectType, uint playerId = DefaultPlayerId,
-        double walkSpeed = DirectionWalk.DefaultSpeed)
+        double walkSpeed = DirectionWalk.DefaultSpeed, Func<int, int, bool>? walkable = null)
     {
         (_player, _objectType, PlayerId) = (player, objectType, playerId);
-        Walk = new DirectionWalk(player.GridX, player.GridY, walkSpeed);
+        Walk = new DirectionWalk(player.GridX, player.GridY, walkSpeed, walkable);
     }
 
     public uint PlayerId { get; }

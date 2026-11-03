@@ -13,13 +13,13 @@ real client as the renderer — the approach proven by
 | LocalExile baseline clone | done (depth 1, upstream main) |
 | .NET 10 SDK | installed via winget |
 | `dotnet build GameServer.slnx -c Release` | **passes** |
-| `dotnet test tests/GameServer.Core.Tests` | **499/499 pass** |
+| `dotnet test tests/GameServer.Core.Tests` | **506/506 pass** |
 | PoE2 client recon (login crypto) | **done — see findings** |
 | PoE2 client recon (DH groups) | **done** — groups unchanged (finding 5) |
 | PoE2 client recon (login key blobs) | **done** — all three mapped (findings 4, 6, 7) |
 | Login handshake vs patched real client | **done** — client accepts our signed `0x0002`, C→S decrypts (wave 3) |
 | PoE2 login message set | in progress — `0x04`/`0x05`/`0x0e`/`0x10`/`0x14`/`0x15`/`0x16`/`0x18` mapped; Play reaches the instance server (wave 6) |
-| PoE2 gateway/instance protocol | in progress — the client enters Clearfell Encampment with a player entity, inventories and the in-game HUD, the area and the player are drawn once server frames run (wave 11), and the player walks when the server echoes its direction moves (wave 12); the Gateway serves all of it with `Game_CLIENT=poe2` (wave 13) |
+| PoE2 gateway/instance protocol | in progress — the client enters Clearfell Encampment with a player entity, inventories and the in-game HUD, the area and the player are drawn once server frames run (wave 11), and the player walks when the server echoes its direction moves (wave 12); the Gateway serves all of it with `Game_CLIENT=poe2` (wave 13), and its walk estimate stops at the camp's walls (wave 14) |
 
 ## Recon findings (2026-10-30, client build of 2026-10-08 install)
 
@@ -753,3 +753,77 @@ Limits:
 - Auth does not log PoE2 clients in (the dialect is not wired into
   `LoginServerSession`); a Steam token still needs mapping to a local
   account.
+
+## Wave 14 — walkability (2026-11-03)
+
+The server's walk estimate now uses the client's walk map, so a player held
+against a wall stays there instead of being echoed through it.
+
+**Where the grid comes from.** PoE1's walk-map hook (right after the
+provider call in `0x1410ddb90`) has a twin in PoE2:
+- `0x1412ac690(ctx, provider)` stores the area's walkability provider at
+  ctx `+0xf0`, then asks it for the grid.
+- In Clearfell Encampment the request is skipped (ctx `+0xf8` is 1), so
+  the hook never fires.
+- The capture asks the provider itself. Of the two providers set per load,
+  the walkability one has vtable `0x14339dd90`. Its vtable `+0x50`
+  (`0x141687dc0`) is `(provider, out, rect)`:
+  - `rect` is `{x0, y0, x1, y1}` in grid cells;
+  - `out` is filled with `{i32 w, h; vector walk; vector projectile}`, as
+    in PoE1;
+  - the area's size in 23-cell tiles is provider `+0x68` / `+0x70`.
+- G1_town is 33 × 30 tiles, a 759 × 690 grid.
+
+`scripts/walkmaps/poe2_walkmap.py` (with `poe2-walkmap.js`) waits for the
+client, hooks the provider setter and asks for the grid 3 s after the area
+load. It writes `data/walkability/<area>_seed<seed>.bin` and `.json`, the
+PoE1 walk-map format. The client does not tell which area it loads, so
+`--area` / `--seed` name it (default `G1_town`, seed 1). The files are game
+data and stay out of git (`data/` is ignored).
+
+**The PoE2 player walks on values ≥ 1** (`InstanceSessionPoe2.Walkable`).
+PoE1's player needs 2. Live:
+- of 230 client cells sampled every 100 ms, 56 were on a 1 and none on a 0;
+- a held walk stopped where the 1s end.
+
+**Spawn.** The old spawn (200, 200) is a 0, outside the camp: the client
+only stood there because the server put it there. The spawn is now
+(296, 262), the walkable cell farthest from any blocked one (43 cells), as
+PoE1 picks its town spawns.
+
+**`DirectionWalk`** steps the estimate a quarter cell at a time:
+- A step into a cell the player cannot walk on is refused, and so is a
+  diagonal step between two blocked cells (a wall corner). When that
+  happens, the walk slides along the wall on the free axis, the larger
+  component first, at full speed (a held diagonal walk ran on along x at
+  ~3.7 cells per 100 ms). With no free axis, it waits against the wall
+  while the key is held.
+- A walker standing on a blocked cell (a spawn or an echo off the walkable
+  ground) walks freely until it is back on walkable ground.
+- Without a walk map, the Gateway logs it and the walk goes through walls,
+  as before.
+
+**Live check (2026-11-03).** 23 echoes were compared with the client's own
+cell, polled every 50 ms with wall-clock times:
+- the median gap is 2 cells; 4 echoes were 10–20 cells off;
+- 3 of those 4 are slides along slanted walls: the client follows the
+  wall's slope, for example moving slightly +y on a (+1, −1) walk;
+- the 4th comes from the client turning gradually after a direction
+  change.
+
+An offline replay of the same walks gave the same median and the same
+outliers for every slide model tried:
+- rotations of ±45° and ±90°;
+- a tangent from the nearby blocked cells;
+- the best of 8, 16 or 32 directions.
+
+So the axis slide stays until the client's collision code is mapped.
+
+Limits:
+- Slides along slanted walls and turns after a direction change still put
+  the estimate up to ~20 cells off. The stop echo then snaps the client to
+  it.
+- Objects the server creates (NPCs, the stash) do not block the estimate;
+  the client may walk around them.
+- Only Clearfell Encampment has an id for its walk map until Auth serves
+  PoE2 areas.

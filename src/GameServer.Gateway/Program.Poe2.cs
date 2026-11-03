@@ -99,7 +99,8 @@ partial class Program
                     $"0x1e area 0x{area:x4} seed {seed} instance {instance}");
 
                 var session = new InstanceSessionPoe2(new PlayerObjectPoe2(
-                    InstanceSessionPoe2.G1TownSpawn.X, InstanceSessionPoe2.G1TownSpawn.Y, Life: 100, Mana: 30));
+                    InstanceSessionPoe2.G1TownSpawn.X, InstanceSessionPoe2.G1TownSpawn.Y, Life: 100, Mana: 30),
+                    walkable: Poe2Walkability(remote, area, seed));
                 var clock = Stopwatch.StartNew();
                 byte[] unread = [.. pending.Skip(InstanceOpeningPoe2.Length)];
                 ciphers.Receive.Process(unread);
@@ -153,6 +154,21 @@ partial class Program
         Console.WriteLine($"[gateway] {remote} ticket 0x{ticket:x8} not resolved ({resolved.Error ?? "unknown area"}); " +
                           "Clearfell Encampment, seed 1, instance 1");
         return (Poe2FallbackArea, 1, 1);
+    }
+
+    // The area's walk map, data/walkability/<id>_seed<seed>.bin (scripts/walkmaps/poe2_walkmap.py), or null: the walk
+    // estimate then goes through walls. Only Clearfell Encampment has a known id until Auth serves PoE2 areas.
+    static Func<int, int, bool>? Poe2Walkability(string remote, ushort area, uint seed)
+    {
+        string id = area == Poe2FallbackArea ? "G1_town" : $"0x{area:x4}";
+        if (AreaLayouts.LoadCells(id, seed, out int w, out int h) is { } cells)
+        {
+            Console.WriteLine($"[gateway] {remote} walk map {id}_seed{seed} ({w}x{h})");
+            return InstanceSessionPoe2.Walkable(cells, w, h);
+        }
+        Console.WriteLine($"[gateway] {remote} no walk map data/walkability/{id}_seed{seed}.bin: walks go through walls " +
+                          "(capture it with scripts/walkmaps/poe2_walkmap.py)");
+        return null;
     }
 
     // Ends a server frame every 33 ms until the connection closes (the length went with the player, 0x2f5).

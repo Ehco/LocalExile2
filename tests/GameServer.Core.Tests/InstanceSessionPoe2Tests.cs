@@ -59,6 +59,34 @@ public class InstanceSessionPoe2Tests
     }
 
     [Fact]
+    public void Lockstep_echoes_stop_at_the_areas_walls()
+    {
+        // Only the row y = 200 is walkable, up to x = 204.
+        var session = new InstanceSessionPoe2(new PlayerObjectPoe2(GridX: 200, GridY: 200, Life: 100), walkSpeed: 10,
+            walkable: (x, y) => y == 200 && x <= 204);
+        session.Handle(AreaGenerated, 0);
+
+        session.Handle(Convert.FromHexString("00630080B400000000"), 1);    // dx 180, dy 0
+        var stop = session.Handle(Convert.FromHexString("0063000000000000"), 3);
+
+        Assert.Equal(InstanceMovementPoe2.DirectionMoveEcho(0x1000, 0, 0, 204, 200), stop.Single());
+    }
+
+    [Fact]
+    public void The_player_walks_on_walk_map_values_from_1_inside_the_map()
+    {
+        var walkable = InstanceSessionPoe2.Walkable([0, 1, 2, 5], width: 2, height: 2);
+
+        Assert.False(walkable(0, 0));
+        Assert.True(walkable(1, 0));
+        Assert.True(walkable(0, 1));
+        Assert.True(walkable(1, 1));
+        Assert.False(walkable(2, 0));
+        Assert.False(walkable(-1, 1));
+        Assert.False(walkable(0, 2));
+    }
+
+    [Fact]
     public void A_move_with_the_clients_cell_starts_from_it()
     {
         var session = NewSession();
