@@ -34,6 +34,8 @@ public class PlayerObjectPoe2Tests
     {
         byte[] blob = new PlayerObjectPoe2(GridX: 0, GridY: 0, Life: 1).Blob();
 
+        Assert.Equal(0x02, blob[0]);                    // in the wake zone, or not drawn nor updated outside towns
+        blob[0] = 0;
         blob[34] = 0;
         blob[PlayerObjectPoe2.PlayerOffset + 4] = 0;   // the Witch's row, 1
         Assert.All(blob, b => Assert.Equal(0, b));

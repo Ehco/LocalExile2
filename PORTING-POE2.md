@@ -1239,3 +1239,98 @@ Limits:
 - Exits are taken by walking into them; the click is not mapped.
 - The town's gates are still not drawn.
 - C→S `0x362` is not framed.
+
+## Wave 20 — monsters, and the wake zone outside towns (2026-11-04)
+
+Clearfell's camp has its three CourtGuardZombies, drawn where the level puts
+them. Outside towns the player is drawn and updated too: it had been frozen
+there since wave 19.
+
+- **The wake zone.** Outside towns, the client draws and updates only the
+  objects in its wake zone. Create object (`0x1421343c0`) puts an object there
+  when bit 1 of its flags byte is set (`+0x8d` |= 4, then `0x141e73d70`). Towns
+  wake everything, so the player (flags 0) worked in the camp.
+  - Symptom in Clearfell: the player was not drawn, the camera did not follow,
+    and mana did not regenerate.
+  - The world itself ran: its frame step `0x142130840` was called 30 times a
+    second and emptied its message queue (Frida).
+  - Wave 19 found the same bit for the exits. The player, the exits and the
+    monsters now all send `0x02`.
+- **Pause** (no effect on the freeze, kept because it matches PoE1).
+  - C→S `0x1ff` (4 bytes, `0x142129330` / `0x1421293a0`) is PoE1's `0x1d4` with
+    the route byte: u8 route, then u8 1 = pause or 0 = resume. The client counts
+    its requests (instance `+0x2734`) and sends only the first pause and the
+    last resume, where `0x141003e60` allows a pause (not in towns). It sends one
+    pair while it loads Clearfell.
+  - S→C `0x1fe` (world group, class `0x14350c430`, read `0x142184420`) is
+    PoE1's pause state `0x1d3` behind the world message header: u8 flags, bit 0
+    → `+0x20`, bit 1 → `+0x21`.
+  - The session answers each request with its state. `0x1ff` and C→S `0x23d`
+    (4 bytes; sent by `0x140f55790` outside towns: u8 route, u8 local player
+    slot, u8 2) are now framed.
+- **Monster types: S→C `0x21`** (read `0x14215aac0`, write `0x14215a9e0`). It is
+  PoE1's `0x20` with the route byte:
+  - u8 route, u16 count and u16 preload (big-endian);
+  - count × raw little-endian u16 MonsterVarieties row;
+  - count × u8 level.
+
+  The client registers `"<variety Id>@<level>"` for each pair. Create object
+  `0x2f7` then names that path's hash. `InstanceProtocolPoe2.MonsterTypes` and
+  `MonsterObjectPoe2.TypePath` build them.
+- **The monster blob** (`MonsterObjectPoe2`). Its components are the base
+  type's .ot chain: Positioned first, then the sections parent-first. A
+  CourtGuardZombie has 14 (Frida, component vtables in deserialize order):
+
+  | Component | Bytes |
+  |---|---|
+  | object flags, base data count | u8 `0x02`, u8 0 |
+  | Positioned | 17: i32 x, i32 y, f32 rotation, u16 team, three u8 |
+  | Stats | 7: compact count, u32, u8, u8 |
+  | ObjectMagicProperties | 4 |
+  | BaseEvents, Pathfinding | 0 |
+  | Buffs | 2 |
+  | Life | 107: pool (life) + 14, pool + 14, pool, 3 × 6, 6, u8 (the player's is longer) |
+  | Animated | u8 bit 0, then `WStr32` .ao |
+  | Inventories | 2 |
+  | Actor | 40 |
+  | Monster, Functions | 0 |
+  | Transitionable (`0x142180490`) | u8 state 1..num_states (7 bits) |
+  | StateMachine (`0x14214cc50` → `0x141dfa4a0`) | u8 shared-state count, u8 shared-timer count, per state a compact value and a u8 |
+  | tasks | u8 |
+
+  The StateMachine throws when its count is not the type's. CourtGuardZombie's
+  .ot has one shared state, PoE2's `define_shared_checkpoint_state = "dead;"`.
+  Live, each zombie blob was read 310/310 (188 bytes and its 59-character
+  model). Other components are not written yet: `Poe2Monsters.InArea` leaves
+  such varieties out with a note.
+- **Which monsters.** The area captures (wave 19) list the monsters the level
+  places. `data/poe2/monster-varieties.json` lists the varieties the server
+  can create: MonsterVarieties row, components and shared states.
+  `scripts/re/poe2/monster_varieties.py` writes it:
+  - the varieties are the captured `Metadata/Monsters/` types that are
+    MonsterVarieties Ids (row size 1030: Id `+0`, BaseMonsterTypeIndex `+72`);
+  - each base type's .ot chain is merged with `ot_components.py`, which now
+    also reads `define_shared_checkpoint_state`;
+  - the files come from the Steam bundles through
+    `scripts/re/poe2/steamdump` (moved into the repository from the session
+    scratch).
+- **Area level.** The monsters take the area's level, WorldAreas' i32
+  AreaLevel at row `+38` (`Poe2Areas.Area.Level`): the town 15, Clearfell 2.
+  These match the client's "Generating level N area" log lines.
+- **Testing far from an entrance.** The Gateway's `Game_POE2_SPAWN=x,y` puts a
+  login at that cell. Transfers still arrive by their exit.
+  - Auth's `Game_POE2_START_AREA=<hash16 hex>` logs straight in to that area.
+  - Clearfell's camp: `Game_POE2_START_AREA=9875`, `Game_POE2_SPAWN=1154,1297`.
+
+**Live test (2026-11-04).**
+- Login to Clearfell: the player is drawn at the town exit, and its mana fills.
+- With the spawn by the camp, the three zombies stand around its fire, at
+  (1116, 1371), (1158, 1364) and (1158, 1326).
+- Walking back to the town and out again still works.
+
+Limits:
+- The monsters stand still: no AI, no attacks, no hits (waves 21–23).
+- Their life is a placeholder 30. Their stats (MonsterVarieties' life,
+  damage, level scaling) are not read.
+- Only varieties made of the base components, Transitionable and StateMachine
+  are written. Two varieties are in the captures so far.

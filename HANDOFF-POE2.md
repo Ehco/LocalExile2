@@ -4,7 +4,7 @@ Read this first if you are picking up the PoE2 work. It covers where things stan
 from nothing, how to run a live test, and what to do next. The wave-by-wave findings (addresses, message layouts,
 live results) are in [PORTING-POE2.md](PORTING-POE2.md). This file points into it and does not repeat it.
 
-Last updated 2026-11-04, after wave 19.
+Last updated 2026-11-04, after wave 20.
 
 ## Where it stands
 
@@ -12,7 +12,8 @@ The real PoE2 Steam client (0.5.5e, patched with our login keys) logs in to our 
 enters Clearfell Encampment, served by our Gateway. Characters are created on the client's create screen and chosen
 on its character screen; the player enters as the saved character (name, class model, level). The player has a HUD
 and inventories, the area is drawn, and the player walks. The server's estimate of where the player is stops at
-walls. Walking into the camp's gate takes the player to Clearfell, and its exit back returns to the camp.
+walls. Walking into the camp's gate takes the player to Clearfell, and its exit back returns to the camp. Clearfell's
+monsters stand where the level places them; they do not act yet.
 
 | Part | State | Where |
 |---|---|---|
@@ -26,8 +27,9 @@ walls. Walking into the camp's gate takes the player to Clearfell, and its exit 
 | Gateway in PoE2 mode | `Game_CLIENT=poe2` | `Program.Poe2.cs`, `InstanceSessionPoe2.cs`; wave 13 |
 | Walkability | Clearfell Encampment and Clearfell (seed 1); the estimate stops at walls (median 2 cells off live) | `scripts/walkmaps/poe2_walkmap.py`, `AreaLayouts.LoadCells`; wave 14 |
 | Exits, change of area | Town ↔ Clearfell: exits from a capture of the level generation, `0x2f1` / `0x29` transfer, arrival by the exit back. Exits are taken by walking into them | `AreaTransitionObjectPoe2.cs`, `Poe2Areas.cs`, `poe2-walkmap.js`; wave 19 |
+| Monsters | Placed from the captures at the area's level: types (`0x21`), blob, wake zone. No AI, attacks or hits; life is a placeholder | `MonsterObjectPoe2.cs`, `Poe2Monsters.cs`, `scripts/re/poe2/monster_varieties.py`; wave 20 |
 
-**Tests.** 595/595 pass:
+**Tests.** 603/603 pass:
 
 ```bash
 dotnet test tests/GameServer.Core.Tests -c Release
@@ -117,6 +119,12 @@ Once per machine. Everything generated here lives in `data/`, which git ignores.
    - It writes `data/walkability/G1_town_seed1.bin` + `.json` (759 × 690). It exists here.
    - The Gateway loads the walk map when the client connects. During the capture session, walks still go through
      walls; reconnect the client to use the new map.
+7. **Monster varieties.** Without `data/poe2/monster-varieties.json` the Gateway logs "no monsters". Write it from
+   the captures (`*.objects.json`) and the Steam bundles (`npm ci` in `Tools/ooz` first):
+   ```bash
+   python scripts/re/poe2/monster_varieties.py
+   ```
+   - Rerun it after capturing a new area. It exists here.
 
 ## Running a live test
 
@@ -252,8 +260,9 @@ In rough order. Each is a wave of its own.
    - add its exit rules to `Poe2Areas` (room fragments → destinations, from its `.tgr` entranceK labels).
 
    Also open: the exit click, the town gates not drawn, C→S `0x362`.
-6. **Then the long tail:** NPCs, monsters, skills, loot. PoE1's Gateway is the template; re-verify every id
-   against PoE2.
+6. **Combat** (wave 20 placed the monsters): the player's skills and attacks, hits and monster death, loot,
+   monster AI, the player's death, experience. Then items, gems, passives, NPCs, waypoints and quests. PoE1's
+   Gateway is the template; re-verify every id against PoE2.
 
 ## Wave index
 
@@ -278,4 +287,5 @@ In rough order. Each is a wave of its own.
 | 16 | Character creation, several characters, the saved character in game | `97628ee` |
 | 17 | The class's life, mana and attributes | `167fb9e` |
 | 18 | The character screen's preview blob | `cba781e` |
-| 19 | Exits, change of area, Clearfell | the commit after `cba781e` |
+| 19 | Exits, change of area, Clearfell | `25fee82` |
+| 20 | Monsters, the wake zone, pause | the commit after `25fee82` |

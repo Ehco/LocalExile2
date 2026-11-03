@@ -30,7 +30,8 @@ public sealed class InstanceSessionPoe2
     static readonly Dictionary<ushort, int> FixedLengths = new()
     {
         [0x1c] = 7, [0x5c] = 8, [0x62] = 4, [InstanceProtocolPoe2.AreaGeneratedId] = 11,
-        [0x17a] = 3, [0x221] = 3, [0x2e6] = 4, [0x357] = 3, [InstanceProtocolPoe2.LeavingId] = 3,
+        [0x17a] = 3, [0x221] = 3, [0x23d] = 4, [InstanceProtocolPoe2.PauseRequestId] = 4, [0x2e6] = 4, [0x357] = 3,
+        [InstanceProtocolPoe2.LeavingId] = 3,
     };
 
     /// <summary>How near (in cells) the walk estimate must come to an exit to take it. The client's click on an exit
@@ -40,14 +41,15 @@ public sealed class InstanceSessionPoe2
     private readonly PlayerObjectPoe2 _player;
     private readonly string _objectType;
     private readonly IReadOnlyList<AreaTransitionObjectPoe2> _exits;
+    private readonly IReadOnlyList<Poe2Monster> _monsters;
 
     /// <param name="walkable">The area's walkability (cells the client walks on), when the server has its walk map;
     /// without it the walk estimate goes through walls.</param>
     public InstanceSessionPoe2(PlayerObjectPoe2 player, string objectType = DefaultObjectType, uint playerId = DefaultPlayerId,
         double walkSpeed = DirectionWalk.DefaultSpeed, Func<int, int, bool>? walkable = null,
-        IReadOnlyList<AreaTransitionObjectPoe2>? exits = null)
+        IReadOnlyList<AreaTransitionObjectPoe2>? exits = null, IReadOnlyList<Poe2Monster>? monsters = null)
     {
-        (_player, _objectType, PlayerId, _exits) = (player, objectType, playerId, exits ?? []);
+        (_player, _objectType, PlayerId, _exits, _monsters) = (player, objectType, playerId, exits ?? [], monsters ?? []);
         Walk = new DirectionWalk(player.GridX, player.GridY, walkSpeed, walkable);
     }
 
@@ -87,6 +89,9 @@ public sealed class InstanceSessionPoe2
             InWorld = true;
             return EnterWorld();
         }
+        // Outside towns the client asks to pause while it loads the area, then to resume: answer with the state, as
+        // PoE1's server answers 0x1d4 with 0x1d3.
+        if (InstanceProtocolPoe2.ReadPauseRequest(message) is { } pause) return [InstanceProtocolPoe2.PauseState(pause)];
         if (InWorld && InstanceMovementPoe2.ReadDirectionMove(message, out _) is { } move)
         {
             // Outside lockstep the client reports its own cell: start from it instead of the estimate.
@@ -114,7 +119,8 @@ public sealed class InstanceSessionPoe2
     }
 
     /// <summary>The local player (0x24), the player object (0x2f7), its inventories (0xdf), enter area (0x23) and the
-    /// frame length (0x2f5), in the order the client accepted live; then the area's exits.</summary>
+    /// frame length (0x2f5), in the order the client accepted live; then the area's exits, and its monsters after their
+    /// types (0x21).</summary>
     public IReadOnlyList<byte[]> EnterWorld() =>
     [
         InstanceProtocolPoe2.SetLocalPlayer(PlayerId),
@@ -125,10 +131,23 @@ public sealed class InstanceSessionPoe2
         InstanceProtocolPoe2.FrameLength(FrameMs),
         .. _exits.Select((exit, i) => InstanceProtocolPoe2.CreateObject(ExitId(i),
             InstanceEntities.ObjectTypeHash(AreaTransitionObjectPoe2.MetadataPath), exit.Blob())),
+        .. MonsterMessages(),
     ];
+
+    private IEnumerable<byte[]> MonsterMessages()
+    {
+        if (_monsters.Count == 0) yield break;
+        yield return InstanceProtocolPoe2.MonsterTypes([.. _monsters.Select(m => (m.Row, m.Level)).Distinct()]);
+        for (int i = 0; i < _monsters.Count; i++)
+            yield return InstanceProtocolPoe2.CreateObject(MonsterId(i), InstanceEntities.ObjectTypeHash(_monsters[i].TypePath),
+                _monsters[i].Object.Blob());
+    }
 
     /// <summary>The entity id of the area's i-th exit.</summary>
     public uint ExitId(int i) => PlayerId + 1 + (uint)i;
+
+    /// <summary>The entity id of the area's i-th monster, after the exits.</summary>
+    public uint MonsterId(int i) => ExitId(_exits.Count) + (uint)i;
 
     /// <summary>Whether <see cref="Split"/> knows the length of messages with this id.</summary>
     public static bool CanFrame(ushort id) => FixedLengths.ContainsKey(id) || id == InstanceMovementPoe2.DirectionMoveId;

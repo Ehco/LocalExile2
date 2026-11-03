@@ -117,10 +117,11 @@ partial class Program
                 var walkable = Poe2Walkability(remote, area, seed);
                 var (exits, objects) = Poe2Layout(remote, area, seed);
                 var spawn = Poe2Spawn(remote, opening.Ticket, area, exits, objects, walkable);
+                var monsters = Poe2AreaMonsters(remote, area, objects);
                 var session = new InstanceSessionPoe2(new PlayerObjectPoe2(spawn.X, spawn.Y,
                     Life: (uint)sheet.MaximumLife, Mana: (uint)sheet.MaximumMana, Stats: sheet.Stats,
                     Name: ticket.Character, ClassRow: row.Index, Experience: CharacterStats.ExperienceFor(ticket.Level)),
-                    objectType: row.ObjectType, walkable: walkable, exits: exits);
+                    objectType: row.ObjectType, walkable: walkable, exits: exits, monsters: monsters);
                 var clock = Stopwatch.StartNew();
                 double? leavingSince = null;
                 bool transferred = false;
@@ -228,12 +229,37 @@ partial class Program
         return (exits, objects);
     }
 
+    static readonly Lazy<IReadOnlyDictionary<string, Poe2Monsters.Variety>> Poe2Varieties = new(() => Poe2Monsters.Load());
+
+    // The monsters the area's capture places, of the varieties in data/poe2/monster-varieties.json.
+    static IReadOnlyList<Poe2Monster> Poe2AreaMonsters(string remote, ushort hash, IReadOnlyList<Poe2Areas.PlacedObject> objects)
+    {
+        string id = Poe2AreaId(hash);
+        if (Poe2Varieties.Value.Count == 0)
+        {
+            Console.WriteLine($"[gateway] {remote} no {Poe2Monsters.DefaultPath}: no monsters");
+            return [];
+        }
+        var notes = new List<string>();
+        byte level = Poe2Areas.ByHash(hash)?.Level ?? 1;
+        var monsters = Poe2Monsters.InArea(objects, Poe2Varieties.Value, level, life: 30, notes);
+        foreach (var note in notes) Console.WriteLine($"[gateway] {remote} {id}: {note}");
+        Console.WriteLine($"[gateway] {remote} {id}: {monsters.Count} monsters " +
+            string.Join(", ", monsters.Select(m => $"{m.VarietyId.Split('/')[^1]} ({m.Object.GridX}, {m.Object.GridY})")));
+        return monsters;
+    }
+
     // Where the player appears: by the exit back to the area the ticket's transfer left, else by the exit to the
     // area's first connection (its entrance1: the way in), else the middle of Clearfell Encampment.
     static (int X, int Y) Poe2Spawn(string remote, uint ticket, ushort hash, IReadOnlyList<AreaTransitionObjectPoe2> exits,
         IReadOnlyList<Poe2Areas.PlacedObject> objects, Func<int, int, bool>? walkable)
     {
         bool transferred = Poe2Areas.CameFrom.TryRemove(ticket, out ushort from);
+        if (!transferred && Poe2SpawnOverride is { } at)
+        {
+            Console.WriteLine($"[gateway] {remote} logs in at ({at.X}, {at.Y}) (Game_POE2_SPAWN)");
+            return at;
+        }
         if (!transferred && Poe2Areas.ByHash(hash) is { Town: false, Connections: [var first, ..] } && Poe2Areas.ById(first) is { } way)
             from = way.Hash;
         if (from != 0 && Poe2Areas.Arrival(from, exits, objects, walkable) is { } arrival)
@@ -243,6 +269,12 @@ partial class Program
         }
         return InstanceSessionPoe2.G1TownSpawn;
     }
+
+    // A login's cell from env Game_POE2_SPAWN ("x,y"), for testing far from an area's entrance; transfers still arrive
+    // by their exit.
+    static readonly (int X, int Y)? Poe2SpawnOverride =
+        Environment.GetEnvironmentVariable("Game_POE2_SPAWN")?.Split(',') is [var sx, var sy]
+            && int.TryParse(sx, out int x) && int.TryParse(sy, out int y) ? (x, y) : null;
 
     // How long the Gateway waits for the client's C→S 0x355 after a change area before it transfers anyway.
     static readonly TimeSpan Poe2LeaveTimeout = TimeSpan.FromSeconds(2);

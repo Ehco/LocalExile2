@@ -4,35 +4,36 @@ using GameServer.Core.Protocol.Instance;
 namespace GameServer.Core.World;
 
 /// <summary>
-/// The PoE2 areas the server knows (PORTING-POE2.md, wave 19): Act 1's WorldAreas ids, HASH16s and connections
-/// (WorldAreas.datc64 of 0.5.5e: id +0, HASH16 at row byte 42, Connections at +22), and what each (area, seed) has where:
-/// the server objects its rooms place, as scripts/walkmaps/poe2_walkmap.py captured them from the client's level
-/// generation (data/walkability/&lt;id&gt;_seed&lt;seed&gt;.objects.json).
+/// The PoE2 areas the server knows (PORTING-POE2.md, waves 19–20): Act 1's WorldAreas ids, HASH16s, levels and
+/// connections (WorldAreas.datc64 of 0.5.5e: id +0, Connections at +22, i32 AreaLevel at +38, HASH16 at row byte 42),
+/// and what each (area, seed) has where: the server objects its rooms place, as scripts/walkmaps/poe2_walkmap.py
+/// captured them from the client's level generation (data/walkability/&lt;id&gt;_seed&lt;seed&gt;.objects.json).
 /// </summary>
 public static class Poe2Areas
 {
+    /// <param name="Level">The area level: its monsters' level (the client logs "Generating level N area").</param>
     /// <param name="Town">A town's logins start in its middle, not by its first exit.</param>
-    public sealed record Area(string Id, ushort Hash, string[] Connections, bool Town = false);
+    public sealed record Area(string Id, ushort Hash, byte Level, string[] Connections, bool Town = false);
 
     public static readonly Area[] Act1 =
     [
-        new("G1_town", 0x3f70, ["G1_1", "G1_2", "G1_2", "G1_2", "G2_1"], Town: true),
-        new("G1_1", 0x0f14, ["G1_town"]),
-        new("G1_2", 0x9875, ["G1_town", "G1_3", "G1_4"]),
-        new("G1_3", 0x9ab2, ["G1_2"]),
-        new("G1_4", 0xcf6a, ["G1_2", "G1_5", "G1_6", "ExpeditionSubArea_Kalguur_Act1"]),
-        new("G1_5", 0x42ef, ["G1_4"]),
-        new("G1_6", 0x21db, ["G1_4", "G1_7"]),
-        new("G1_7", 0xe911, ["G1_6", "G1_8", "G1_11", "G1_8", "G1_9", "G1_9"]),
-        new("G1_8", 0x918a, ["G1_7", "G1_7"]),
-        new("G1_9", 0x2bcc, ["G1_7", "G1_7"]),
-        new("G1_10", 0x65b2, ["G1_4"]),
-        new("G1_11", 0xa117, ["G1_7", "G1_13_1", "G1_12"]),
-        new("G1_12", 0xac89, ["G1_11"]),
-        new("G1_13_1", 0xf0ca, ["G1_11", "G1_13_2"]),
-        new("G1_13_2", 0x946a, ["G1_13_1", "G1_14"]),
-        new("G1_14", 0x6123, ["G1_13_2", "G1_15"]),
-        new("G1_15", 0xc351, ["G1_14"]),
+        new("G1_town", 0x3f70, 15, ["G1_1", "G1_2", "G1_2", "G1_2", "G2_1"], Town: true),
+        new("G1_1", 0x0f14, 1, ["G1_town"]),
+        new("G1_2", 0x9875, 2, ["G1_town", "G1_3", "G1_4"]),
+        new("G1_3", 0x9ab2, 3, ["G1_2"]),
+        new("G1_4", 0xcf6a, 4, ["G1_2", "G1_5", "G1_6", "ExpeditionSubArea_Kalguur_Act1"]),
+        new("G1_5", 0x42ef, 5, ["G1_4"]),
+        new("G1_6", 0x21db, 6, ["G1_4", "G1_7"]),
+        new("G1_7", 0xe911, 7, ["G1_6", "G1_8", "G1_11", "G1_8", "G1_9", "G1_9"]),
+        new("G1_8", 0x918a, 8, ["G1_7", "G1_7"]),
+        new("G1_9", 0x2bcc, 8, ["G1_7", "G1_7"]),
+        new("G1_10", 0x65b2, 15, ["G1_4"]),
+        new("G1_11", 0xa117, 10, ["G1_7", "G1_13_1", "G1_12"]),
+        new("G1_12", 0xac89, 11, ["G1_11"]),
+        new("G1_13_1", 0xf0ca, 12, ["G1_11", "G1_13_2"]),
+        new("G1_13_2", 0x946a, 13, ["G1_13_1", "G1_14"]),
+        new("G1_14", 0x6123, 14, ["G1_13_2", "G1_15"]),
+        new("G1_15", 0xc351, 15, ["G1_14"]),
     ];
 
     public static Area? ByHash(ushort hash) => Act1.FirstOrDefault(a => a.Hash == hash);

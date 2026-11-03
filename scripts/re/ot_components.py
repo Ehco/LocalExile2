@@ -339,12 +339,13 @@ def parse(text):
 def state_machine(toks, r):
     """Networked StateMachine data (0x141e3ee40 reads it): `define_shared_state = "a; b = 2;"` -> [(a, 0), (b, 2)],
     `define_shared_timer = "t;"` -> [t]. Plain define_state / define_timer stay on the client. Only top-level
-    tokens of the section: nested blocks (event handlers) are skipped."""
+    tokens of the section: nested blocks (event handlers) are skipped. PoE2's define_shared_checkpoint_state is a
+    shared state too (CourtGuardZombie's "dead": the client reads one, PORTING-POE2.md wave 20)."""
     depth = 0
     for k, t in enumerate(toks):
         if t == "{": depth += 1
         elif t == "}": depth -= 1
-        elif depth == 0 and t in ("define_shared_state", "define_shared_timer") and k + 2 < len(toks) and toks[k + 1] == "=":
+        elif depth == 0 and t in ("define_shared_state", "define_shared_checkpoint_state", "define_shared_timer") and k + 2 < len(toks) and toks[k + 1] == "=":
             for item in toks[k + 2].strip("\"'").split(";"):
                 name, _, value = item.partition("=")
                 name = name.strip()

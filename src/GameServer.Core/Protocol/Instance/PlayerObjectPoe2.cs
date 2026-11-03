@@ -25,7 +25,7 @@ public sealed record PlayerObjectPoe2(int GridX, int GridY, uint Life, uint Ener
     public byte[] Blob()
     {
         var w = new BlobWriter();
-        w.U8(0);            // object flags (bit0 → +0x8d|1, bit1 → +0x8d|4)
+        w.U8(0x02);         // object flags (bit0 → +0x8d|1, bit1 → +0x8d|4: in the wake zone)
         w.U8(0);            // base data entry count
         // Positioned (0x141dd89a0): i32 x, i32 y, f32 rotation, u16 +0x1e0, three flag bytes (PoE1 had two). The type's
         // +0x29 prefix is off. The client clamps the position to the area (size × 23).

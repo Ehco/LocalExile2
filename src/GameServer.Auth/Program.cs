@@ -290,7 +290,10 @@ static void Dump(byte[] data)
 sealed record Poe2Login(string Account, string Character)
 {
     // WorldAreas G1_town (Clearfell Encampment), HASH16: where Play puts every PoE2 character until Auth serves PoE2 areas.
-    public const ushort StartArea = 0x3f70;
+    // Game_POE2_START_AREA (a HASH16 in hex, e.g. 9875 for Clearfell) starts in another area, for tests.
+    public static readonly ushort StartArea =
+        ushort.TryParse(Environment.GetEnvironmentVariable("Game_POE2_START_AREA"),
+            System.Globalization.NumberStyles.HexNumber, null, out ushort area) ? area : (ushort)0x3f70;
 
     public static Poe2Login? FromEnvironment() =>
         string.Equals(Environment.GetEnvironmentVariable("Game_CLIENT"), "poe2", StringComparison.OrdinalIgnoreCase)

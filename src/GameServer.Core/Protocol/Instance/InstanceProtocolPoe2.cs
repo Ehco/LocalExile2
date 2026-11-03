@@ -19,6 +19,32 @@ public static class InstanceProtocolPoe2
 
     public const ushort ConnectInstanceId = 0x29, ChangeAreaId = 0x2f1, LeavingId = 0x355;
 
+    public const ushort MonsterTypesId = 0x21;
+
+    public const ushort PauseRequestId = 0x1ff, PauseStateId = 0x1fe;
+
+    /// <summary>C→S 0x1ff (4 bytes; sent by 0x142129330 / 0x1421293a0): PoE1's 0x1d4 with the route byte. u8 route, u8 1 =
+    /// pause, 0 = resume. The client counts its requests (instance +0x2734) and sends only the first pause and the last
+    /// resume, where 0x141003e60 allows a pause (not in towns); live it pauses while it loads an area.</summary>
+    public static bool? ReadPauseRequest(ReadOnlySpan<byte> m) =>
+        m.Length >= 4 && BinaryPrimitives.ReadUInt16BigEndian(m) == PauseRequestId ? m[3] != 0 : null;
+
+    /// <summary>S→C 0x1fe (world group, class 0x14350c430, read 0x142184420): PoE1's pause state 0x1d3 behind the entity
+    /// header. u8 flags: bit 0 → +0x20, bit 1 → +0x21; the world is paused while both are set.</summary>
+    public static byte[] PauseState(bool paused) =>
+        new LoginWriter().U16(PauseStateId).U32(0).U32(0).U8(0).U16(0).U8(paused ? (byte)0x03 : (byte)0x00).ToArray();
+
+    /// <summary>S→C 0x21 (read 0x14215aac0, write 0x14215a9e0): PoE1's 0x20 with the route byte. u16 count and u16
+    /// preload (big-endian), then count × raw u16 MonsterVarieties row and count × u8 level; the client registers
+    /// "&lt;variety Id&gt;@&lt;level&gt;" per pair (<see cref="MonsterObjectPoe2.TypePath"/>).</summary>
+    public static byte[] MonsterTypes(IReadOnlyList<(ushort Row, byte Level)> types)
+    {
+        var w = new LoginWriter().U16(MonsterTypesId).U8(0).U16((ushort)types.Count).U16((ushort)types.Count);
+        foreach (var (row, _) in types) w.U8((byte)row).U8((byte)(row >> 8));
+        foreach (var (_, level) in types) w.U8(level);
+        return w.ToArray();
+    }
+
     /// <summary>
     /// S→C 0x2f1 (instance dispatcher, third switch case 2 at 0x1421250c0): PoE1's change area 0x2b2. u8 route, u16
     /// destination WorldAreas HASH16 (+0x18, looked up by 0x1423e3f10), u8 (+0x1a; PoE1 had a u16 loading screen
