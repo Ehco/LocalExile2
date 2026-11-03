@@ -12,7 +12,11 @@ public class LoginMessagePoe2Tests
         (LoginDirection.ClientToServer, new TokenLoginPoe2(0x40, B(32, 0xbb), B(32, 0xaa), 0, B(159, 7))),
         (LoginDirection.ServerToClient, new LoginResultPoe2(7, 0, "a", B(32, 0xdd), 0x20, 1, [1, 2])),
         (LoginDirection.ClientToServer, new U32Message(0x18, 7)),
+        (LoginDirection.ServerToClient, new CharacterListPoe2(7, [Entry("Hero")], 0, 3, 1, 2, [9], [new(0x10, -5), new(0x20, 0x12345)], 4, 5)),
+        (LoginDirection.ClientToServer, new PlayPoe2(0x80, [new(1, 2), new(3, 4)])),
     ];
+
+    private static CharacterEntryPoe2 Entry(string name) => new(name, "Standard", 0, 0, 12, 0, 3, 0, 1, 0, 0, 0, 0);
 
     public static TheoryData<int> SampleIndexes() => [.. Enumerable.Range(0, Samples.Length)];
 
@@ -64,6 +68,54 @@ public class LoginMessagePoe2Tests
         Assert.True(LoginCodec.TryDecode(LoginDirection.ClientToServer, Convert.FromHexString("001800000000"), out var m, out int n, LoginDialect.Poe2));
         Assert.Equal(new U32Message(0x18, 0), m);
         Assert.Equal(6, n);
+    }
+
+    [Fact]
+    public void Character_list_layout_follows_the_poe2_writer()
+    {
+        // Writer 0x14214df90: u32 +0x70, u8 count + entries (0x142716570), u8 +0x28, u8 +0x29, u16 +0x74, u16 +0x76,
+        // blob +0x30, compact count + (u16, compact int) pairs +0x48, u32 +0x68, u32 +0x6c.
+        var entry = new CharacterEntryPoe2("a", "b", 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11);
+        byte[] wire = LoginMessage.Encode(new CharacterListPoe2(0x77, [entry], 0, 3, 0x74, 0x76, [0xee], [new(0x10, -5)], 0x68, 0x6c));
+
+        string expectedEntry = "000161" + "000162" + "01" + "02" + "03" + "00000004" + "05" + "0006" + "0007" + "0008" + "0009" + "0A" + "0B";
+        Assert.Equal("0015" + "00000077" + "01" + expectedEntry + "00" + "03" + "0074" + "0076" + "0001EE" + "01" + "0010" + "7B"
+            + "00000068" + "0000006C", Convert.ToHexString(wire));
+    }
+
+    [Fact]
+    public void Play_sends_a_flag_byte_and_a_compact_list_of_u32_pairs()
+    {
+        // Captured 2026-11-03 after Play on the one-character list: flag byte 0, one pair (0, 0).
+        Assert.True(LoginCodec.TryDecode(LoginDirection.ClientToServer, Convert.FromHexString("000E00010000000000000000"), out var m, out int n, LoginDialect.Poe2));
+        var play = Assert.IsType<PlayPoe2>(m);
+        Assert.Equal(12, n);
+        Assert.Equal(0, play.Flags);
+        Assert.Equal([new U32Pair(0, 0)], play.Pairs);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(0x3f)]
+    [InlineData(-0x40)]
+    [InlineData(0x40)]
+    [InlineData(-0x2000)]
+    [InlineData(0x1fffff)]
+    [InlineData(-0x4000000)]
+    [InlineData(int.MaxValue)]
+    [InlineData(int.MinValue)]
+    public void Compact_ints_read_back_what_the_instance_encoder_writes(int value)
+    {
+        var w = new LoginWriter();
+        GameServer.Core.Protocol.Instance.InstanceProtocol.CompactInt(w, value);
+        GameServer.Core.Protocol.Instance.InstanceProtocol.CompactUInt(w, (uint)value);
+        byte[] bytes = w.ToArray();
+
+        var r = new LoginReader(bytes);
+        Assert.Equal(value, r.CompactInt());
+        Assert.Equal((uint)value, r.CompactUInt());
+        Assert.False(r.Short);
+        Assert.Equal(bytes.Length, r.Position);
     }
 
     [Fact]

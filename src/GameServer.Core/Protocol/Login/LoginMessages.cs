@@ -429,10 +429,14 @@ public static class LoginCodec
     // PoE2 (PathOfExileSteam.exe, factory 0x14214fbe0): PoE1's tables with the layouts that changed (LoginMessagesPoe2.cs).
     // The factory also has S→C 0x16, whose layout is not mapped yet. C→S 0x18 (character list request, sender
     // 0x140f03f10) gained a u32: the U32_10 of the 0x04 that logged in, read back from the record at login+0xef0.
-    private static readonly Dictionary<ushort, Reader> Poe2ServerToClient = new(ServerToClient) { [0x04] = LoginResultPoe2.Read };
+    // Not mapped yet: C→S 0x10, which the client sends right after 0x15 (seen live as 0010 00 00000000).
+    private static readonly Dictionary<ushort, Reader> Poe2ServerToClient = new(ServerToClient)
+    {
+        [0x04] = LoginResultPoe2.Read, [0x15] = CharacterListPoe2.Read,
+    };
     private static readonly Dictionary<ushort, Reader> Poe2ClientToServer = new(ClientToServer)
     {
-        [0x05] = TokenLoginPoe2.Read, [0x18] = U32Message.Read,
+        [0x05] = TokenLoginPoe2.Read, [0x0e] = PlayPoe2.Read, [0x18] = U32Message.Read,
     };
 
     public static bool IsKnown(LoginDirection dir, ushort id, LoginDialect dialect = LoginDialect.Poe1) =>

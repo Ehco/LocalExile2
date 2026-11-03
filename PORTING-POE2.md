@@ -13,12 +13,12 @@ real client as the renderer — the approach proven by
 | LocalExile baseline clone | done (depth 1, upstream main) |
 | .NET 10 SDK | installed via winget |
 | `dotnet build GameServer.slnx -c Release` | **passes** |
-| `dotnet test tests/GameServer.Core.Tests` | **426/426 pass** |
+| `dotnet test tests/GameServer.Core.Tests` | **439/439 pass** |
 | PoE2 client recon (login crypto) | **done — see findings** |
 | PoE2 client recon (DH groups) | **done** — groups unchanged (finding 5) |
 | PoE2 client recon (login key blobs) | **done** — all three mapped (findings 4, 6, 7) |
 | Login handshake vs patched real client | **done** — client accepts our signed `0x0002`, C→S decrypts (wave 3) |
-| PoE2 login message set | in progress — `0x04`/`0x05`/`0x18` mapped, client reaches character select (wave 4) |
+| PoE2 login message set | in progress — `0x04`/`0x05`/`0x0e`/`0x15`/`0x18` mapped; character list shows, Play waits for `0x14` (wave 5) |
 | PoE2 gateway/instance protocol | not started |
 
 ## Recon findings (2026-10-30, client build of 2026-10-08 install)
@@ -246,7 +246,48 @@ client accepted both, left the login screen for the character-select scene
 (no UI yet) and sent `0018 00000000`, then kept up the 10 s keepalive while it
 waited for the character list.
 
-Next: map PoE2's S→C `0x15` (character list, read `0x14214e210`; its entry
-struct likely grew for the 12 classes), then wire `TokenLoginPoe2` into
+Wave 5 maps the character list the client waits for here.
+
+## Wave 5 — character list and Play (2026-11-03)
+
+- **S→C `0x15` (character list)** (vtable `0x143509f98`, write `0x14214df90`,
+  read `0x14214e210`): `u32, u8 count + entries, u8 selected, u8 slots, u16,
+  u16, blob, compact count + (u16, compact int) pairs, u32, u32`. PoE1 was
+  `u8 count + entries, u8, u8, blob`.
+  - The leading u32 must equal the `0x04` u32: dispatch `0x1420e86b4` looks
+    the login record up by it and drops the list otherwise.
+  - When the selected index points at an entry, the blob is parsed into 31
+    records of 0x80 bytes (PoE1: 17), presumably the equipment preview, and
+    the blob plus the remaining fields go to the listeners at `login+0xd08`.
+    The last u32 is a hash-map key (a missing key gives an empty result), so
+    zeros are safe. An empty blob is fine.
+  - The compact ints are the instance protocol's: PoE2's signed encoder
+    `0x141cfc050` matches `InstanceProtocol.CompactInt` byte for byte, and
+    `LoginReader` now reads both forms.
+- **Entry (0x58 bytes, write `0x142716570`)**: PoE1's entry plus a u8 (wire
+  position 4) and two u16s (positions 10–11): `wstr name, wstr league, u8,
+  u8 (new), u8 level, u32, u8 class, u16, u16, u16 (new), u16 (new), u8, u8`.
+  Live: level 12 with class byte 3 rendered as **"Probe — Level 12 Duelist —
+  Hideout — Standard League"** with Play / Create / Delete enabled. The client
+  takes the max level into `login+0xee8`, as PoE1 does.
+- **C→S `0x0e` (Play)** (vtable `0x143506470`, write `0x1420e47e0`, sender
+  `0x1420e9ff0`): `u8 flags, compact count, count × (u32, u32)`. Flags are
+  the realm byte (`0x143a0c068`) in bits 0–6 and a bool argument in bit 7.
+  PoE1 sent `u8 realm, u32 index`. Captured after Play: `000E 00 01
+  00000000 00000000` (one pair (0, 0)); the client then showed "Contacting
+  Server..." — waiting for the instance assignment `0x14`, as in PoE1.
+- **C→S `0x10` is new and not mapped.** The client sends it by itself right
+  after `0x15`: `0010 00 00000000`. Its writer sets the id indirectly; the
+  id-immediate scans that found the others found nothing.
+- Seen while searching, not in the codec yet: `0x0c` (delete, sender
+  `0x140ed80a0`) now builds `wstr, u8, u32` (PoE1: `wstr, u8`), and the
+  classes used for `0x2a`/`0x2b` and `0x3a`/`0x42` write a u32 after their
+  u8.
+
+Code: `CharacterListPoe2`, `CharacterEntryPoe2`, `PlayPoe2` and
+`LoginReader.CompactUInt/CompactInt`, in the PoE2 dialect.
+
+Next: map C→S `0x10`, then PoE2's S→C `0x14` (instance assignment, read
+`0x14214ee60`), which Play waits for. Then wire the PoE2 dialect into
 `LoginServerSession`/`GameServer.Auth` (which local account a Steam token
 maps to is an open design choice).
