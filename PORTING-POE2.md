@@ -13,13 +13,13 @@ real client as the renderer — the approach proven by
 | LocalExile baseline clone | done (depth 1, upstream main) |
 | .NET 10 SDK | installed via winget |
 | `dotnet build GameServer.slnx -c Release` | **passes** |
-| `dotnet test tests/GameServer.Core.Tests` | **482/482 pass** |
+| `dotnet test tests/GameServer.Core.Tests` | **499/499 pass** |
 | PoE2 client recon (login crypto) | **done — see findings** |
 | PoE2 client recon (DH groups) | **done** — groups unchanged (finding 5) |
 | PoE2 client recon (login key blobs) | **done** — all three mapped (findings 4, 6, 7) |
 | Login handshake vs patched real client | **done** — client accepts our signed `0x0002`, C→S decrypts (wave 3) |
 | PoE2 login message set | in progress — `0x04`/`0x05`/`0x0e`/`0x10`/`0x14`/`0x15`/`0x16`/`0x18` mapped; Play reaches the instance server (wave 6) |
-| PoE2 gateway/instance protocol | in progress — the client enters Clearfell Encampment with a player entity, inventories and the in-game HUD, the area and the player are drawn once server frames run (wave 11), and the player walks when the server echoes its direction moves (wave 12) |
+| PoE2 gateway/instance protocol | in progress — the client enters Clearfell Encampment with a player entity, inventories and the in-game HUD, the area and the player are drawn once server frames run (wave 11), and the player walks when the server echoes its direction moves (wave 12); the Gateway serves all of it with `Game_CLIENT=poe2` (wave 13) |
 
 ## Recon findings (2026-10-30, client build of 2026-10-08 install)
 
@@ -708,3 +708,48 @@ Next:
   cell matches the client's path around obstacles.
 - Wiring frames, `0x63`/`0x64` and the PoE2 player into the Gateway.
 - Player (name, class, experience) and Stats; C→S `0x1c` and `0x62`.
+
+## Wave 13 — the Gateway serves the PoE2 client (2026-11-03)
+
+`Game_CLIENT=poe2` runs the Gateway as the PoE2 instance server
+(`Program.Poe2.cs`). It branches before the PoE1-only startup, so it needs no
+PoE1 client (HNC mask), data tables or saves. Per connection it:
+
+1. reads `InstanceOpeningPoe2`;
+2. asks Auth to resolve the ticket. Auth does not log PoE2 clients in yet, so
+   for a ticket Auth does not know it falls back to Clearfell Encampment, seed
+   1, instance 1, and logs that;
+3. sends `0x11` in plaintext, then the encrypted area `0x1e`;
+4. hands each decrypted client message to `InstanceSessionPoe2`;
+5. once the player is in the world, ends a server frame (`0x2f4`) every
+   33 ms. Every encrypted write goes through one gate, since the Salsa20
+   stream must see bytes in wire order.
+
+`InstanceSessionPoe2` (Core, tested without sockets):
+- **On the client's `0x9a`:** sends `0x24`, the `0x2f7` player (IntFour, the
+  242-byte blob, standing in cell 200,200), the 121 inventories, `0x23`, and
+  `0x2f5` 33 ms. The frames start from there.
+- **On each `0x63`:** answers with `0x64` at the cell `DirectionWalk` puts the
+  player in.
+  - `DirectionWalk` is a straight line from the cell centre at 37 cells/s.
+  - When the client reports its own cell (outside lockstep), the walk
+    restarts from it.
+- **Framing (`Split`):** the client messages of known length are `0x1c`,
+  `0x5c`, `0x62`, `0x9a`, `0x17a`, `0x221`, `0x2e6`, `0x357` and `0x63`.
+  - A message cut off at the end of a read waits for the next read.
+  - Any other id drops the rest of the read; the client writes one message
+    per chunk. Seen on entering: `0xbc`, `0x2e8`, `0x13d`.
+
+**Live test (2026-11-03).** The harness ran only the login, with the
+Gateway's keyring (`Game_INSTANCE_SECRET`). The client connected to the
+Gateway on 6112, entered Clearfell Encampment, and walked around the camp on
+the Gateway's `0x64` echoes.
+
+Limits:
+- No PoE2 walkability grid, so the walk estimate ignores walls. A player held
+  against a wall is put through it at the next echo.
+- The character's class, name, level and stats are not used: every player is
+  the IntFour template.
+- Auth does not log PoE2 clients in (the dialect is not wired into
+  `LoginServerSession`); a Steam token still needs mapping to a local
+  account.
