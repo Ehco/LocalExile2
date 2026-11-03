@@ -115,6 +115,55 @@ public class LoginCryptoTests
         AssertSessionWorks(client, new ServerHandshake(restored));
     }
 
+    [Fact]
+    public void Detects_poe2_layout_with_short_client_static_private()
+    {
+        // PoE2 order: server static public, SPKI, gap to +0x350, client static private (zero-padded short exponent).
+        BigInteger clientStaticPriv = BigInteger.Pow(2, 267) + 12345;
+        byte[] serverStaticPub = Fixed(LoginGroups.Static.PublicFor(LoginGroups.Static.RandomExponent()), 384);
+        byte[] spki = SyntheticVerifyKey();
+        byte[] image = [.. new byte[16], .. serverStaticPub, .. spki, .. new byte[0x350 - spki.Length],
+            .. Fixed(clientStaticPriv, 384), .. new byte[0x100]];
+
+        var client = ClientImage.Load(image);
+
+        Assert.Same(ClientLayout.Poe2, client.Layout);
+        Assert.Equal(16 + 384, client.Offset);
+        Assert.Equal(clientStaticPriv, client.ReadClientStaticPrivate());
+        Assert.Equal(new BigInteger(serverStaticPub, isUnsigned: true, isBigEndian: true), client.ReadServerStaticPublic());
+    }
+
+    [Fact]
+    public void Detects_poe1_layout()
+    {
+        BigInteger clientStaticPriv = LoginGroups.Static.RandomExponent();
+        byte[] spki = SyntheticVerifyKey();
+        byte[] image = [.. new byte[16], .. spki, .. new byte[0x350 - spki.Length], .. Fixed(clientStaticPriv, 384),
+            .. Fixed(LoginGroups.Static.PublicFor(LoginGroups.Static.RandomExponent()), 384), .. new byte[0x100]];
+
+        var client = ClientImage.Load(image);
+
+        Assert.Same(ClientLayout.Poe1_3293b, client.Layout);
+        Assert.Equal(clientStaticPriv, client.ReadClientStaticPrivate());
+    }
+
+    /// <summary>A DER SPKI with the client's exact header and length (p 2048 bits, q 224, g and y 2047); the values
+    /// only need the right sizes, since layout detection never uses them as a DSA key.</summary>
+    private static byte[] SyntheticVerifyKey()
+    {
+        BigInteger p = BigInteger.Pow(2, 2047) + 1, q = BigInteger.Pow(2, 223) + 1;
+        BigInteger g = BigInteger.Pow(2, 2046) + 1, y = BigInteger.Pow(2, 2046) + 3;
+        byte[] der = ClientImage.EncodeVerifyKey(new DsaKey(p, q, g, y));
+        Assert.Equal(ClientImage.DefaultVerifyKeyLength, der.Length);
+        return der;
+    }
+
+    private static byte[] Fixed(BigInteger v, int length)
+    {
+        byte[] b = v.ToByteArray(isUnsigned: true, isBigEndian: true);
+        return [.. new byte[length - b.Length], .. b];
+    }
+
     private static void AssertSessionWorks(ClientHandshake client, ServerHandshake server)
     {
         byte[] helloBytes = client.Hello();

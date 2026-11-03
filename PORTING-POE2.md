@@ -15,7 +15,8 @@ real client as the renderer — the approach proven by
 | `dotnet build GameServer.slnx -c Release` | **passes** |
 | `dotnet test tests/GameServer.Core.Tests` | **415/415 pass** |
 | PoE2 client recon (login crypto) | **done — see findings** |
-| PoE2 client recon (DH groups) | **blocked — needs disassembly** (see next wave) |
+| PoE2 client recon (DH groups) | **done** — groups unchanged (finding 5) |
+| PoE2 client recon (login key blobs) | **done** — all three mapped (findings 4, 6, 7) |
 | PoE2 gateway/instance protocol | not started |
 
 ## Recon findings (2026-10-30, client build of 2026-10-08 install)
@@ -34,13 +35,14 @@ real client as the renderer — the approach proven by
    DSA p=2048 / q=224 — the same size class as PoE1, so
    `ClientImage.VerifyKeyLength == 0x346` still holds and
    `ClientImage.FindUnique` works **unchanged**.
-4. **But the key blob adjacency changed.** PoE1 layout (see
+4. **Only the server static public moved.** PoE1 layout (see
    `src/GameServer.Core/Protocol/Login/LoginKeys.cs`):
    verify key `+0x000`, client static private `+0x350` (384 B),
-   server static public `+0x4d0` (384 B). In PoE2, `+0x350` is **zeroed** and
-   `+0x4d0` holds unrelated .rdata pointers (input-device name strings).
-   → `ClientStaticPrivateOffset` / `ServerStaticPublicOffset` must be
-   re-derived; the DER-prefix locator itself ports as-is.
+   server static public `+0x4d0` (384 B). In PoE2 the client static private
+   is still at `+0x350`, but it is a short exponent: 350 zero bytes, then
+   34 bytes (`0a400f5d…9d3a`, 268 bits). `+0x4d0` holds unrelated .rdata
+   pointers (input-device name strings); the server static public is at
+   `-0x180` (finding 6). The DER-prefix locator ports as-is.
 5. **The DH groups are intact — as CryptoPP hex-string literals.** A raw-byte
    search misses them; a numeric-literal scan finds four `0x…` string constants
    clustered in .rdata (`0x350f330`–`0x350f860`): static P `cd8fd4b7…` (768 hex
@@ -49,24 +51,40 @@ real client as the renderer — the approach proven by
    unchanged.** (`scripts/re/find_private_key.py` maps the whole string
    neighborhood: `RSA`, `PublicElement`, `SubgroupOrder…`.)
 6. **Server static public located and verified.** The 384-byte blob at file
-   `0x2f0b4d0` (VA `0x14310C6D0`) — immediately *before* the SPKI, vs PoE1's
+   `0x2f0b4d0` (VA `0x142f0c6d0`) — immediately *before* the SPKI, vs PoE1's
    `+0x4d0` after — satisfies `y^q ≡ 1 (mod P)` in the static group
    (`scripts/recon/scan_dh_groups.py` + inline verification).
-7. **Login crypto code cluster found** via rip-relative xref scan
-   (`scripts/re/find_private_key.py`): functions at
-   `0x140d30830`–`0x140d333c0` reference the SPKI/static-pub region and the
-   group-string literals; the group-parsing ctor lives around
-   `0x14219923c`–`0x1421a62d0`. Ghidra headless (12.1.4, installed) is
-   decompiling these — the client static private key's location is the
-   remaining unknown (it may be relocated, runtime-generated, or dropped from
-   the static DH half; a live-traffic sniff of msg `0x0002` C→S would settle
-   it if the decompile is ambiguous).
+7. **Login crypto code path traced** (rip-relative xrefs to the key region,
+   function bounds from `.pdata`, capstone disassembly), same shape as PoE1's
+   [re/008](Agents/docs/re/008-login-handshake.md):
+   - `0x1420e7410` (login connect) is the only code that touches the key
+     blobs. It copies the 0x346-byte SPKI into a string, then calls the
+     crypto-object ctor `0x14219dd90(obj /*0x780 B*/, SPKI+0x350,
+     SPKI-0x180, &spki)`, then `GenerateEphemeralKeyPair` (vtable `+0x90` of
+     `obj+0x2b0`) and writes msg `0x0002`.
+   - The ctor parses the group strings into `obj+0xb0` (static) and
+     `obj+0x1b0` (ephemeral), and stores the raw pointers: client static
+     private at `obj+0x750`, server static public at `obj+0x758`.
+   - `0x14219ef90` calls `DH2::Agree` (vtable `+0x98` of `obj+0x2b0`) with
+     `[obj+0x750]` as the static private, `[obj+0x758]` as the static other
+     public and the server's ephemeral from the message, `validate = 1`.
+     Crypto++ reads a private key as `PrivateKeyLength()` = byte length of q
+     (384) big-endian bytes, so the leading zeros are padding.
+   - The 268-bit size is exactly Crypto++'s exponent cap,
+     `2·DiscreteLogWorkFactor(3072) = 268` bits, which a key made by
+     `GeneratePrivateKey` on this group has. The blob is not a hex or decimal
+     string literal (the only long numeric literals are the four group
+     strings), and nothing writes it at runtime (it is in .rdata).
+   `ClientLayout.Poe2` now maps it, so `GameServer.Auth probe`/`keygen`/`patch`
+   work on the PoE2 exe. `scripts/re/poe2_login_keys.py` reproduces the blob
+   checks and the xref list on any build.
 
 **Implication:** the login-stack port is now close to mechanical: identical
-crypto family, identical DH groups, DER-prefix locator unchanged. Open items:
-the PoE2 key-blob offsets (wave 1), the client-static-private question, the
-Salsa20 key-material layout (`km = SHA-512(Z_static || Z_ephemeral)`, IV
-split), and the per-version packet/message set.
+crypto family, identical DH groups, identical key blobs (the server static
+public moved), DER-prefix locator unchanged. Open items: confirming the
+handshake against the patched real client, the Salsa20 key-material layout
+(`km = SHA-512(Z_static || Z_ephemeral)`, IV split), and the per-version
+packet/message set.
 
 ## Next waves (in order)
 
@@ -123,8 +141,8 @@ gateway named `America` to match `gateway_id=America` in
   credentials: C→S `0002 | 0080 | <128 B ephemeral DH public> | 0000` — 134
   bytes, byte-for-byte the same framing as PoE1's login handshake.
 - The static DH half is still in play (no static public on the wire), so the
-  client static private key must be in the binary — raw 384-byte blob,
-  location TBD via the Ghidra decompile.
+  client static private key must be in the binary — raw 384-byte blob at
+  SPKI+0x350 (recon finding 7).
 - The stub's dummy S→C reply (right framing, wrong key/sig) was accepted at
   the transport level; the client stays connected awaiting a valid DSA
   signature (`data/login-capture2.txt` has the full dump).
@@ -144,11 +162,15 @@ is unchanged.
 - The stub's dummy S→C `0x0002` reply (right framing, dummy key+sig) got
   **no response** — the client stayed connected ~90 s, sent nothing more, then
   the connection dropped on idle timeout. So either the S→C framing differs
-  in PoE2 or the client silently discarded the unverifiable signature.
-  Ghidra decompile of the group-parsing functions (running) will disambiguate.
+  in PoE2 or the client silently discarded the unverifiable signature. The
+  code path in recon finding 7 matches PoE1's, where a failed DSA check
+  ("General Rhoa Failure #3") ends the handshake without a reply, so silent
+  discard is the expected result.
 
 **Consequence:** the login handshake is close to PoE1's; the port's next
-concrete deliverable is a *real* S→C `0x0002` — which needs the DSA signing
-key (keygen works: the SPKI locator + domain parse are verified) and the
-client static private location (Ghidra decompile of the group-parsing
-functions at `0x14219923c`–`0x1421a62d0` is the source).
+concrete deliverable is a *real* S→C `0x0002`. Both inputs are now mapped
+(`ClientLayout.Poe2`): `GameServer.Auth keygen` reads the client static
+private and the DSA domain, and `patch` swaps the verify key `y` and the
+server static public at SPKI-0x180. Next: patch a copy of the exe, serve the
+login with those keys, and check that the client's first encrypted message
+decrypts.
