@@ -13,13 +13,13 @@ real client as the renderer — the approach proven by
 | LocalExile baseline clone | done (depth 1, upstream main) |
 | .NET 10 SDK | installed via winget |
 | `dotnet build GameServer.slnx -c Release` | **passes** |
-| `dotnet test tests/GameServer.Core.Tests` | **465/465 pass** |
+| `dotnet test tests/GameServer.Core.Tests` | **482/482 pass** |
 | PoE2 client recon (login crypto) | **done — see findings** |
 | PoE2 client recon (DH groups) | **done** — groups unchanged (finding 5) |
 | PoE2 client recon (login key blobs) | **done** — all three mapped (findings 4, 6, 7) |
 | Login handshake vs patched real client | **done** — client accepts our signed `0x0002`, C→S decrypts (wave 3) |
 | PoE2 login message set | in progress — `0x04`/`0x05`/`0x0e`/`0x10`/`0x14`/`0x15`/`0x16`/`0x18` mapped; Play reaches the instance server (wave 6) |
-| PoE2 gateway/instance protocol | in progress — the client enters Clearfell Encampment with a player entity, inventories and the in-game HUD, and the area and the player are drawn once server frames run (wave 11); movement is not served yet |
+| PoE2 gateway/instance protocol | in progress — the client enters Clearfell Encampment with a player entity, inventories and the in-game HUD, the area and the player are drawn once server frames run (wave 11), and the player walks when the server echoes its direction moves (wave 12) |
 
 ## Recon findings (2026-10-30, client build of 2026-10-08 install)
 
@@ -659,3 +659,52 @@ Next:
 - Mapping Player (name, class, experience) and Stats; life and mana maxima
   currently come from defaults (HUD 100/28, 30/34).
 - C→S `0x1c` (every 100 ms) and `0x62`.
+
+## Wave 12 — direction movement (2026-11-03)
+
+PoE2 does not send PoE1's "use Move at a cell" (`0x25`, or lockstep `0x18e`)
+for a click on the ground. While the button is held it sends the direction
+from the player to the cursor, and a zero direction on release. In lockstep
+the client only sends it; the player walks once the server echoes it.
+
+- **C→S `0x63`** (write `0x141f3a6e0`, sender `0x142113a1d`): u8 slot (the
+  local player's `+0x181`, PoE2's route byte), then four signed compact ints
+  (PoE1's `CompactInt`; client writer `0x141cfc050`), then u8.
+  - dx, dy: a vector of length about 180 (±127 on a diagonal, ±180 on an
+    axis); 0, 0 = stop.
+  - x, y: the player's cell (Positioned `+0x444/+0x448`). It is sent only
+    outside lockstep (network mode `+0x661` ≠ 2); in lockstep it is 0, 0.
+  - u8: 1 when stat `0x5746` is non-zero.
+  - Outside lockstep the sender also starts the walk itself
+    (`0x141e4fb40`).
+  - While the button is held, the client steers around obstacles: each turn
+    is a new `0x63`.
+- **S→C `0x64`** (world group: factory `0x142186c20`, class `0x14350c250`,
+  read `0x141f6b260`; handler `0x1421497c0`, case at `0x142149852`):
+  - Layout: the object header (`0x141f4b800`: u32 object id, u32, u8, u16,
+    big-endian), dx, dy, x, y as signed compact ints, then u8 bool.
+  - A zero direction stops the object.
+  - Otherwise, if (x, y) is not the object's cell, the client first puts it
+    there. In predictive mode it does so only from 46 cells away (squared
+    distance ≥ `0x844`); closer, it bends the direction instead. Then it
+    stores the direction (`+0x400`) and walks (`0x141e4fb40`).
+  - So x, y must be the server's idea of the player's cell. Sending a stale
+    cell teleports the player back.
+- **S→C `0x65`** (class `0x14350c150`): the object header alone. Its case
+  resets `+0x8b0`/`+0x8c8`; it is not mapped further.
+- **Live test.** The harness answered every `0x63` with a `0x64` carrying the
+  same direction. The cell came from a walk estimate: 37 cells/s along the
+  previous direction, PoE1's measured speed.
+  - Frida (Positioned `+0x444/+0x448` every 100 ms): the client walks between
+    echoes at about 3.7 cells per 100 ms along an axis, so the estimate holds.
+  - Corrections at each new echo were 1–2 cells.
+
+Code: `InstanceMovementPoe2` with `ReadDirectionMove` (`0x63`),
+`DirectionMoveEcho` (`0x64`) and `TryReadCompactInt` (the reader for
+`InstanceProtocol.CompactInt`). Tests are in `InstanceMovementPoe2Tests`.
+
+Next:
+- A server-side walker that follows the area's walkable grid, so the echoed
+  cell matches the client's path around obstacles.
+- Wiring frames, `0x63`/`0x64` and the PoE2 player into the Gateway.
+- Player (name, class, experience) and Stats; C→S `0x1c` and `0x62`.
