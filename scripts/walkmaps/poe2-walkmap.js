@@ -7,11 +7,23 @@
 // for rect = { i32 x0, y0, x1, y1 } in grid cells. The area's size in 23-cell tiles is provider +0x68 / +0x70. Of the
 // two providers set per load, the walkability one has vtable 0x14339dd90. The walk grid is one byte per cell like
 // PoE1's; the PoE2 player walks on cells >= 1 (PoE1's needs 2; live 2026-11-03, InstanceSessionPoe2.Walkable).
+//
+// The grid goes with the area's server objects (exits, waypoint, checkpoints, monsters...), which the client does not
+// create but meets while it generates the level: for every object a room places, 0x141ff3490 asks the spawn
+// predicate 0x1415a16b0 (vtable [+0xa0]; call returns to 0x141ff3844) whether the client creates it, with
+//   rdx = the room's object record, whose +0 is the type handle (handle +8 -> UTF-16 path) and +8 the .ao handle,
+//   r14 = the room, [r14] its .arm handle (still the caller's register on entry),
+//   caller rsp +0x70 = { i32 x, i32 y (grid cells, room placed and turned), f32 wx, wy, z, f32 angle (radians) }.
 
 const IMAGE_BASE = ptr('0x140000000');
 const SET_PROVIDER = '0x1412ac690', FILL = '0x141687dc0', PROVIDER_VTABLE = '0x14339dd90';
-// The first bytes of both functions in the 0.5.5e client; nothing is hooked or called on another build.
-const EXPECTED = { [SET_PROVIDER]: '488bc455535657415441554156415748', [FILL]: '48895c241848896c2420488954241056' };
+const SPAWN_PREDICATE = '0x1415a16b0', ROOM_OBJECT_CALLER = '0x141ff3844';
+// The first bytes of the hooked and called code in the 0.5.5e client; nothing is hooked or called on another build.
+const EXPECTED = { [SET_PROVIDER]: '488bc455535657415441554156415748', [FILL]: '48895c241848896c2420488954241056',
+  [SPAWN_PREDICATE]: '48895c2408574883ec30488bfa488b0a', [ROOM_OBJECT_CALLER]: '84c0756a488d4db0e8cf90bdfe488b45' };
+// Client-only objects the predicate also meets (decoration, flow fields, sound): not kept.
+const NOT_SERVER = /\/Doodad[A-Za-z]*$|NonDefaultFlows|AudioTools|\/Sector$|\/RuleSet$|AreaTransitionBlockage$|AreaTransitionDoodad$/;
+const objects = [];
 // The provider is set before the area's terrain is finished; ask for the grid a little later.
 const SETTLE_MS = 3000;
 
@@ -23,17 +35,42 @@ const mismatch = Object.keys(EXPECTED).find(va => hex(at(va), 16) !== EXPECTED[v
 if (mismatch) {
   send({ type: 'refused', reason: `${exe.name} is not the PoE2 0.5.5e client (code at ${mismatch} does not match)` });
 } else {
+  Interceptor.attach(at(SPAWN_PREDICATE), {
+    onEnter(args) {
+      if (!this.returnAddress.equals(at(ROOM_OBJECT_CALLER))) return;
+      try {
+        const type = handlePath(args[1].readPointer());
+        if (!type || NOT_SERVER.test(type)) return;
+        const place = this.context.rsp.add(8 + 0x70);
+        objects.push({
+          type, model: handlePath(args[1].add(8).readPointer()), room: handlePath(this.context.r14.readPointer()),
+          x: place.readS32(), y: place.add(4).readS32(), rotation: place.add(0x14).readFloat(),
+        });
+      } catch (e) {
+        send({ type: 'error', message: `object: ${e}` });
+      }
+    },
+  });
   Interceptor.attach(at(SET_PROVIDER), {
     onEnter(args) {
       const provider = args[1];
+      // The level's objects come before its providers; the login scene's before its other provider, and the world
+      // maps', generated while the grid settles, after.
+      const placed = objects.splice(0);
       if (provider.isNull() || !provider.readPointer().equals(at(PROVIDER_VTABLE))) return;
-      setTimeout(() => capture(provider), SETTLE_MS);
+      setTimeout(() => capture(provider, placed), SETTLE_MS);
     },
   });
   send({ type: 'ready', module: exe.name });
 }
 
-function capture(provider) {
+function handlePath(handle) {
+  if (handle.isNull()) return null;
+  const text = handle.add(8).readPointer();
+  return text.isNull() ? null : text.readUtf16String();
+}
+
+function capture(provider, placed) {
   try {
     const w = provider.add(0x68).readS32() * 23, h = provider.add(0x70).readS32() * 23;
     const out = Memory.alloc(0x40), rect = Memory.alloc(16);
@@ -48,7 +85,7 @@ function capture(provider) {
       send({ type: 'skip', w: gw, h: gh, bytes: n });
       return;
     }
-    send({ type: 'grid', w: gw, h: gh }, begin.readByteArray(n));
+    send({ type: 'grid', w: gw, h: gh, objects: placed }, begin.readByteArray(n));
   } catch (e) {
     send({ type: 'error', message: String(e) });
   }

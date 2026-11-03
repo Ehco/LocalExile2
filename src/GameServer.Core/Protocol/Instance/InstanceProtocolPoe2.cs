@@ -17,6 +17,31 @@ public static class InstanceProtocolPoe2
 
     public const ushort FrameEndId = 0x2f4, FrameLengthId = 0x2f5;
 
+    public const ushort ConnectInstanceId = 0x29, ChangeAreaId = 0x2f1, LeavingId = 0x355;
+
+    /// <summary>
+    /// S→C 0x2f1 (instance dispatcher, third switch case 2 at 0x1421250c0): PoE1's change area 0x2b2. u8 route, u16
+    /// destination WorldAreas HASH16 (+0x18, looked up by 0x1423e3f10), u8 (+0x1a; PoE1 had a u16 loading screen
+    /// row). The handler shows the loading screen and calls 0x14211fc50(this, 1), which sends C→S
+    /// <see cref="LeavingId"/> once.
+    /// </summary>
+    public static byte[] ChangeArea(ushort destinationHash16, byte u8 = 0) =>
+        new LoginWriter().U16(ChangeAreaId).U8(0).U16(destinationHash16).U8(u8).ToArray();
+
+    /// <summary>
+    /// S→C 0x29 (reader 0x142152020, class size 0x98; handled by the in-game state's slot 0xf8, 0x14100b2a0, "Got
+    /// Instance Details"): PoE1's connect to instance 0x27 (<see cref="InstanceTransfer.ConnectInstance"/>) with the
+    /// route byte first and one more u8 last. u8 route, str host, u16 port, u32 IPv4 (big-endian), u32, u16 area HASH16
+    /// (+0x8c), u32 ticket (+0x40), u8, u8, 64-byte instance key, 8 bytes, u8. The client then opens a new instance
+    /// connection with the ticket and keeps the old one until the new one is up.
+    /// </summary>
+    public static byte[] ConnectInstance(string host, ushort port, uint ticket, ushort areaHash16, byte[] key64)
+    {
+        uint ip = BinaryPrimitives.ReadUInt32BigEndian(System.Net.IPAddress.Parse(host).GetAddressBytes());
+        return new LoginWriter().U16(ConnectInstanceId).U8(0).Str(host).U16(port).U32(ip).U32(0).U16(areaHash16).U32(ticket)
+            .U8(0).U8(0).Fixed(key64, 64).Fixed(new byte[8], 8).U8(0).ToArray();
+    }
+
     /// <summary>
     /// S→C 0x2f4 (id only; built by the world-group factory 0x142186c20, class 0x143506450): PoE1's frame end 0x2b5. The
     /// PoE2 client runs in lockstep on localhost (Network Mode "auto"): until frames arrive the world neither runs nor is

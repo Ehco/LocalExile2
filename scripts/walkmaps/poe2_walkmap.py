@@ -4,9 +4,11 @@ Usage (start it before the client, which it waits for; the grid is requested whe
     python scripts/walkmaps/poe2_walkmap.py [--area G1_town] [--seed 1] [--process PathOfExileSteam_le2.exe]
 
 Writes data/walkability/<area>_seed<seed>.bin plus <area>_seed<seed>.json ({"w":..,"h":..}), the same format as the
-PoE1 walk maps (walkmaps.py), which the Gateway's PoE2 mode reads (PORTING-POE2.md, wave 14). The PoE2 client does not
-tell which area it loads, so --area and --seed name the one the Gateway serves (Clearfell Encampment, seed 1, while
-Auth does not log PoE2 clients in). Existing walk maps are kept. Nothing is sent anywhere; data/ is git-ignored.
+PoE1 walk maps (walkmaps.py), which the Gateway's PoE2 mode reads (PORTING-POE2.md, wave 14), and
+<area>_seed<seed>.objects.json: the server objects the level's rooms place (exits, waypoint, checkpoints, monsters...),
+each {"type", "model", "room", "x", "y", "rotation"} in grid cells and radians (wave 19). The PoE2 client does not tell
+which area it loads, so --area and --seed name the next one it loads: start this in the area before (or before the
+client). Existing files are kept. Nothing is sent anywhere; data/ is git-ignored.
 """
 
 import argparse
@@ -48,6 +50,7 @@ def main():
             log(f"{kind}: {payload}")
         elif kind == "grid" and data is not None:
             save(stem, payload["w"], payload["h"], data)
+            save_objects(stem, payload.get("objects") or [])
             done.set()
 
     script.on("message", on_message)
@@ -73,6 +76,17 @@ def save(stem, w, h, cells):
         json.dump({"w": w, "h": h}, f)
     walkable = sum(1 for c in cells if c >= 1)   # the PoE2 player walks on 1 too (InstanceSessionPoe2.Walkable)
     log(f"saved {name}.bin ({w}x{h}, {walkable} walkable cells)")
+
+
+def save_objects(stem, objects):
+    name = os.path.basename(stem) + ".objects.json"
+    if os.path.exists(stem + ".objects.json"):
+        log(f"{name} already exists; kept")
+        return
+    with open(stem + ".objects.json.tmp", "w", encoding="utf-8") as f:
+        json.dump(objects, f, indent=1)
+    replace(stem + ".objects.json.tmp", stem + ".objects.json")
+    log(f"saved {name} ({len(objects)} objects)")
 
 
 if __name__ == "__main__":

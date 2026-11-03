@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Sockets;
 using GameServer.Core.Accounts;
 using GameServer.Core.Protocol.Instance;
+using GameServer.Core.World;
 
 // The instance server for the PoE2 client (Game_CLIENT=poe2; PORTING-POE2.md, wave 13). It needs none of the PoE1
 // client, data or saves: it reads PoE2's opening, sends the area, then lets InstanceSessionPoe2 answer the client
@@ -16,6 +17,9 @@ partial class Program
 
     // What the Gateway enters a PoE2 client with: Auth's area and character for the ticket.
     sealed record Poe2Ticket(ushort Area, uint Seed, ulong Instance, string Character, CharacterClass Class, int Level);
+
+    // Game_POE2_TRACE=1 logs every decrypted client chunk (its first 48 bytes), to map new C→S messages.
+    static readonly bool Poe2Trace = Environment.GetEnvironmentVariable("Game_POE2_TRACE") == "1";
 
     static bool IsPoe2Client =>
         string.Equals(Environment.GetEnvironmentVariable("Game_CLIENT"), "poe2", StringComparison.OrdinalIgnoreCase);
@@ -110,12 +114,16 @@ partial class Program
                     + $"life {sheet.MaximumLife}, mana {sheet.MaximumMana}");
                 // The level start (ExperienceLevels: PoE2 0.5.5e's matches PoE1's) needs data/tables/ExperienceLevels.json;
                 // without it the experience is 0 and the client shows level 1.
-                var session = new InstanceSessionPoe2(new PlayerObjectPoe2(
-                    InstanceSessionPoe2.G1TownSpawn.X, InstanceSessionPoe2.G1TownSpawn.Y,
+                var walkable = Poe2Walkability(remote, area, seed);
+                var (exits, objects) = Poe2Layout(remote, area, seed);
+                var spawn = Poe2Spawn(remote, opening.Ticket, area, exits, objects, walkable);
+                var session = new InstanceSessionPoe2(new PlayerObjectPoe2(spawn.X, spawn.Y,
                     Life: (uint)sheet.MaximumLife, Mana: (uint)sheet.MaximumMana, Stats: sheet.Stats,
                     Name: ticket.Character, ClassRow: row.Index, Experience: CharacterStats.ExperienceFor(ticket.Level)),
-                    objectType: row.ObjectType, walkable: Poe2Walkability(remote, area, seed));
+                    objectType: row.ObjectType, walkable: walkable, exits: exits);
                 var clock = Stopwatch.StartNew();
+                double? leavingSince = null;
+                bool transferred = false;
                 byte[] unread = [.. pending.Skip(InstanceOpeningPoe2.Length)];
                 ciphers.Receive.Process(unread);
                 while (true)
@@ -126,7 +134,15 @@ partial class Program
                         bool wasInWorld = session.InWorld;
                         foreach (var answer in session.Handle(message, clock.Elapsed.TotalSeconds))
                             await Send(answer, DescribePoe2(answer));
-                        if (!wasInWorld && session.InWorld) _ = RunPoe2Frames(Send, closed.Token);
+                        if (!wasInWorld && session.InWorld)
+                            _ = RunPoe2Frames(Send, () => session.Tick(clock.Elapsed.TotalSeconds), closed.Token);
+                    }
+                    if (session.LeavingBy is not null && leavingSince is null) leavingSince = clock.Elapsed.TotalSeconds;
+                    if (leavingSince is { } since && !transferred
+                        && (session.LeaveAcknowledged || clock.Elapsed.TotalSeconds - since >= Poe2LeaveTimeout.TotalSeconds))
+                    {
+                        transferred = true;
+                        await TransferPoe2(remote, opening.Ticket, area, session.LeavingBy!.DestinationHash16, keyring, Send);
                     }
                     unread = unread[rest..];
                     if (unread.Length >= 2 && !InstanceSessionPoe2.CanFrame((ushort)(unread[0] << 8 | unread[1])))
@@ -139,6 +155,7 @@ partial class Program
                     if (got == 0) break;
                     byte[] chunk = buffer[..got];
                     ciphers.Receive.Process(chunk);
+                    if (Poe2Trace) Console.WriteLine($"[gateway] {remote} C→S chunk {Convert.ToHexString(chunk, 0, Math.Min(got, 48))}");
                     unread = [.. unread, .. chunk];
                     if (unread.Length > Poe2UnreadCap) { reason = $"{unread.Length} B of client data not framed"; break; }
                 }
@@ -175,11 +192,13 @@ partial class Program
         return new(Poe2FallbackArea, 1, 1, "Exile", CharacterClass.Witch, 1);
     }
 
+    static string Poe2AreaId(ushort area) => Poe2Areas.ByHash(area)?.Id ?? $"0x{area:x4}";
+
     // The area's walk map, data/walkability/<id>_seed<seed>.bin (scripts/walkmaps/poe2_walkmap.py), or null: the walk
-    // estimate then goes through walls. Only Clearfell Encampment has a known id until Auth serves PoE2 areas.
+    // estimate then goes through walls.
     static Func<int, int, bool>? Poe2Walkability(string remote, ushort area, uint seed)
     {
-        string id = area == Poe2FallbackArea ? "G1_town" : $"0x{area:x4}";
+        string id = Poe2AreaId(area);
         if (AreaLayouts.LoadCells(id, seed, out int w, out int h) is { } cells)
         {
             Console.WriteLine($"[gateway] {remote} walk map {id}_seed{seed} ({w}x{h})");
@@ -190,13 +209,74 @@ partial class Program
         return null;
     }
 
-    // Ends a server frame every 33 ms until the connection closes (the length went with the player, 0x2f5).
-    static async Task RunPoe2Frames(Func<byte[], string?, Task> send, CancellationToken stop)
+    // The area's exits and other server objects, from its capture (data/walkability/<id>_seed<seed>.objects.json,
+    // scripts/walkmaps/poe2_walkmap.py); none without one.
+    static (IReadOnlyList<AreaTransitionObjectPoe2> Exits, IReadOnlyList<Poe2Areas.PlacedObject> Objects) Poe2Layout(
+        string remote, ushort hash, uint seed)
+    {
+        string id = Poe2AreaId(hash);
+        if (Poe2Areas.ByHash(hash) is not { } area || Poe2Areas.LoadObjects(id, seed) is not { } objects)
+        {
+            Console.WriteLine($"[gateway] {remote} no objects for {id}_seed{seed}: no exits (capture them with scripts/walkmaps/poe2_walkmap.py)");
+            return ([], []);
+        }
+        var notes = new List<string>();
+        var exits = Poe2Areas.Exits(area, objects, notes);
+        foreach (var note in notes) Console.WriteLine($"[gateway] {remote} {id}: {note}");
+        Console.WriteLine($"[gateway] {remote} {id}_seed{seed}: {objects.Count} objects, exits " +
+            string.Join(", ", exits.Select(e => $"({e.GridX}, {e.GridY}) → {Poe2AreaId(e.DestinationHash16)}")));
+        return (exits, objects);
+    }
+
+    // Where the player appears: by the exit back to the area the ticket's transfer left, else by the exit to the
+    // area's first connection (its entrance1: the way in), else the middle of Clearfell Encampment.
+    static (int X, int Y) Poe2Spawn(string remote, uint ticket, ushort hash, IReadOnlyList<AreaTransitionObjectPoe2> exits,
+        IReadOnlyList<Poe2Areas.PlacedObject> objects, Func<int, int, bool>? walkable)
+    {
+        bool transferred = Poe2Areas.CameFrom.TryRemove(ticket, out ushort from);
+        if (!transferred && Poe2Areas.ByHash(hash) is { Town: false, Connections: [var first, ..] } && Poe2Areas.ById(first) is { } way)
+            from = way.Hash;
+        if (from != 0 && Poe2Areas.Arrival(from, exits, objects, walkable) is { } arrival)
+        {
+            Console.WriteLine($"[gateway] {remote} arrives at ({arrival.X}, {arrival.Y}), by the exit to {Poe2AreaId(from)}");
+            return arrival;
+        }
+        return InstanceSessionPoe2.G1TownSpawn;
+    }
+
+    // How long the Gateway waits for the client's C→S 0x355 after a change area before it transfers anyway.
+    static readonly TimeSpan Poe2LeaveTimeout = TimeSpan.FromSeconds(2);
+
+    // Auth moves the character to the destination and issues its ticket; 0x29 sends the client there (it reconnects
+    // to this Gateway with that ticket).
+    static async Task TransferPoe2(string remote, uint ticket, ushort from, ushort area, InstanceKeyring keyring,
+        Func<byte[], string?, Task> send)
+    {
+        var r = await InstanceControl.CallAsync(new ControlRequest { Op = "transfer", Ticket = ticket, Area = area });
+        if (!r.Ok)
+        {
+            Console.WriteLine($"[gateway] {remote} transfer to 0x{area:x4} failed: {r.Error}");
+            return;
+        }
+        Poe2Areas.CameFrom[r.Ticket] = from;
+        string host = Environment.GetEnvironmentVariable("Game_GATEWAY_HOST") ?? "127.0.0.1";
+        ushort port = ushort.TryParse(Environment.GetEnvironmentVariable("Game_GATEWAY_PORT"), out var gp) ? gp : (ushort)6112;
+        await send(InstanceProtocolPoe2.ConnectInstance(host, port, r.Ticket, r.Area, keyring.Key(r.Ticket)),
+            $"0x29 connect to instance {r.Instance} of area 0x{r.Area:x4} (seed {r.Seed}) at {host}:{port}, ticket 0x{r.Ticket:x8}");
+    }
+
+    // Ends a server frame every 33 ms until the connection closes (the length went with the player, 0x2f5), after the
+    // session's work for that frame.
+    static async Task RunPoe2Frames(Func<byte[], string?, Task> send, Func<IReadOnlyList<byte[]>> tick, CancellationToken stop)
     {
         using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(InstanceSessionPoe2.FrameMs));
         try
         {
-            while (await timer.WaitForNextTickAsync(stop)) await send(InstanceProtocolPoe2.FrameEnd(), null);
+            while (await timer.WaitForNextTickAsync(stop))
+            {
+                foreach (var message in tick()) await send(message, DescribePoe2(message));
+                await send(InstanceProtocolPoe2.FrameEnd(), null);
+            }
         }
         catch (Exception e) when (e is IOException or ObjectDisposedException or OperationCanceledException or SocketException) { }
     }
@@ -204,9 +284,10 @@ partial class Program
     static string DescribePoe2(byte[] message) => (message[0] << 8 | message[1]) switch
     {
         InstanceProtocolPoe2.LocalPlayerId => "0x24 local player",
-        InstanceProtocolPoe2.CreateObjectId => $"0x2f7 player object ({message.Length} B)",
+        InstanceProtocolPoe2.CreateObjectId => $"0x2f7 object 0x{message[2] << 24 | message[3] << 16 | message[4] << 8 | message[5]:x} ({message.Length} B)",
         InstanceInventoriesPoe2.AddInventoryId => $"0xdf × {InstanceInventoriesPoe2.PlayerDefaults.Length} inventories",
         InstanceProtocolPoe2.EnterAreaId => "0x23 enter area",
+        InstanceProtocolPoe2.ChangeAreaId => $"0x2f1 change area to 0x{message[3] << 8 | message[4]:x4}",
         InstanceProtocolPoe2.FrameLengthId => $"0x2f5 frame length {message[2]} ms, then 0x2f4 every frame",
         InstanceMovementPoe2.DirectionMoveEchoId => $"0x64 move echo {Convert.ToHexString(message, 13, message.Length - 13)}",
         var id => $"0x{id:x}",

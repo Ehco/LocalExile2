@@ -1135,3 +1135,107 @@ Limits:
   sent as 2 zero bytes) is not mapped either.
 - **Unknown fields.** The three trailing bytes and the u8 after each
   reference are sent as zeros; what they do is not known.
+
+## Wave 19 — leaving the town: exits, the change of area and Clearfell (2026-11-04)
+
+The player walks out of Clearfell Encampment into Clearfell (G1_2), arrives by
+its exit back to the town, and walks back. Each area's exits come from a capture
+of the client's own level generation.
+
+- **The exit object**, `Metadata/MiscellaneousObjects/AreaTransition`
+  (`AreaTransitionObjectPoe2`). The client's readers consumed it exactly, live:
+
+  | Part | Bytes | Reader / note |
+  |---|---|---|
+  | object flags | u8 `0x02` | bit 1 → `+0x8d` bit 2; create object (`0x1421343c0`) then puts the object in the wake zone (`0x141e73d70`, PoE1's separate `0x1a9`). Without it the exit is neither drawn nor on the map |
+  | base data count | u8 0 | |
+  | Positioned | 17 | i32 x, i32 y, f32 rotation, u16, three u8 (the player's layout; grid position at component `+0x444`/`+0x448`) |
+  | Animated | u8 bit 0, then `WStr32` .ao | |
+  | AreaTransition (`0x1416e2dc0`) | 4 or 5 | u8 state (7 bits + top bit), u8 variant 2 + u16 WorldAreas HASH16 (`0x141d9bca0`), then a compact index **only** when a flag of the area is set (`[[object +8] +0x78] +0x98`, byte `+0x14`) and the state is 0 |
+  | Stats | 7 | compact count, u32, u8, u8 |
+  | ObjectMagicProperties (`0x141dc8190`) | 4 | |
+  | MinimapIcon (`0x141d91260`) | u8 | bit 1 shown (`+0x39`, object `+0x8d` \|= 8), bit 2 `+0x38`, bit 0 → u16 icon, bit 3 → variant |
+  | InteractionAction (`0x141d81480`), tasks | u8, u8 | |
+
+  The index: live, the town's exits read one and Clearfell's read none. A sent
+  index in Clearfell shifts every later component, and the client stops on
+  "Buffer Underflow" (thrown via `0x1421bffd0`; found by tracing each
+  component reader's stream position). The Gateway sends it in towns only.
+- **The change of area.**
+  1. S→C `0x2f1` (`ChangeArea`): u8 route, u16 destination HASH16, u8. The
+     client shows the loading screen and answers C→S `0x355` (3 bytes), then a
+     C→S `0x362` of 868 bytes (PoE1's `0x2cb` analogue; not framed, dropped).
+  2. The Gateway asks Auth's control `transfer` (ticket, area) for the
+     destination ticket, on `0x355` or after 2 s.
+  3. S→C `0x29` (`ConnectInstance`, reader `0x142152020`): PoE1's `0x27` with
+     the route byte first and one more u8 last. u8 route, str host, u16 port,
+     u32 IPv4 (big-endian), u32, u16 area HASH16, u32 ticket, u8, u8, 64-byte
+     instance key, 8 bytes, u8. The client opens a new instance connection with
+     the ticket ("Got Instance Details from login server").
+  4. The Gateway serves the new connection the destination area. It remembers
+     which area the ticket left (`Poe2Areas.CameFrom`) to place the arrival.
+- **Taking an exit.** Clicking an exit sends nothing yet (the client is in WASD
+  mode, and the exits are not targetable). The session takes the exit when the
+  walk estimate comes within 6 cells of it (`ExitReach`), once the player has
+  been out of reach of every exit (an arrival is beside one).
+- **Where the exits are: a capture of the level generation.** The client
+  generates each level itself and meets every object its rooms place, server
+  ones included. For each, `0x141ff3490` asks the spawn predicate `0x1415a16b0`
+  (vtable `[+0xa0]`, call returning to `0x141ff3844`) whether the client creates
+  it:
+  - `rdx` = the room's object record: `+0` type handle, `+8` .ao handle (a
+    handle's `+8` points to its UTF-16 path);
+  - `r14` = the room; `[r14]` is its .arm handle (still the caller's register on
+    entry);
+  - caller `rsp + 0x70` = i32 x, i32 y in grid cells (the room placed and
+    turned), f32 world x, y, z, f32 angle in radians.
+
+  `scripts/walkmaps/poe2_walkmap.py` now also writes
+  `<area>_seed<seed>.objects.json`: exits, arrival markers, waypoint,
+  checkpoints, monsters, chests. The level's objects come before its
+  walkability provider. The login scene's come before its other provider, and
+  the world maps' (generated while the grid settles) after. So the script keeps
+  the objects met since the previous provider. Decoration, flow fields and sound
+  objects are left out.
+- **Where each exit leads.** A level's graph (`.tgr`) labels the node of each
+  exit room `entranceK`: the area's K-th WorldAreas connection.
+  - Clearfell's `felling_*.tgr`: `town_N` is entrance1 (G1_town),
+    `mud_entrance` entrance2 (G1_3), `exit_woods` entrance3 (G1_4).
+  - The town's: entrance1 by the lumbermill (G1_1), entrance2–4 by its three
+    gates (G1_2).
+
+  The capture names the room and model, not the node, so `Poe2Areas` maps a
+  fragment of either to the destination. Only the town and Clearfell have rules.
+- **Arrival.** Each exit room has an `AreaTransition_Auto` marker 14–18 cells
+  from the exit: the arrival by that exit. Without a marker (the town's gates),
+  the arrival is the first walkable cell 8–20 cells from the exit. A login into a
+  non-town area arrives by its entrance1.
+- **Act 1 areas** (WorldAreas: id `+0`, Connections `+22`, HASH16 at row byte
+  42) are in `Poe2Areas.Act1`. The walk maps and captures are named by their id.
+
+Clearfell, seed 1:
+
+| Object | Grid | Room |
+|---|---|---|
+| exit to G1_town (generic_cylinder) | (1001, 474) | `lumbermill_exteriorN.arm` |
+| its arrival marker | (1001, 460) | |
+| exit to G1_4 The Grelwood | (280, 999) | `exit_woods.arm` |
+| exit to G1_3 Mud Burrow (generic_cylinder_vert) | (655, 1406) | `mud_entrance_woods_2.arm` |
+| waypoint | (585, 1344) | `mud_entrance_woods_2.arm` |
+| camp: 3 CourtGuardZombie, CampsiteChest | around (1140, 1360) | `campsite_03.arm` |
+
+**Live test (2026-11-04).**
+- Walking into the town's north gate sends `0x2f1`. The client loads Clearfell
+  (instance 2, seed 1) and arrives at (1001, 460), beside an exit drawn and
+  labelled "Clearfell Encampment".
+- Walking into that exit returns to the town at (317, 197), by the north gate.
+- The Clearfell walk map (1656 × 1656) was captured on the way.
+
+Limits:
+- Only the town and Clearfell are captured. Each further area needs one visit
+  with the capture running, and its exit rules in `Poe2Areas`.
+- The layouts are those of seed 1 (Auth's seed). Another seed needs its own
+  capture.
+- Exits are taken by walking into them; the click is not mapped.
+- The town's gates are still not drawn.
+- C→S `0x362` is not framed.

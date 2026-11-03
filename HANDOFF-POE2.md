@@ -4,15 +4,15 @@ Read this first if you are picking up the PoE2 work. It covers where things stan
 from nothing, how to run a live test, and what to do next. The wave-by-wave findings (addresses, message layouts,
 live results) are in [PORTING-POE2.md](PORTING-POE2.md). This file points into it and does not repeat it.
 
-Last updated 2026-11-04, after wave 18.
+Last updated 2026-11-04, after wave 19.
 
 ## Where it stands
 
 The real PoE2 Steam client (0.5.5e, patched with our login keys) logs in to our Auth with its Steam ticket and
 enters Clearfell Encampment, served by our Gateway. Characters are created on the client's create screen and chosen
 on its character screen; the player enters as the saved character (name, class model, level). The player has a HUD
-and inventories, the area is drawn, and the player walks. The server's estimate of where the player is stops at the
-camp's walls.
+and inventories, the area is drawn, and the player walks. The server's estimate of where the player is stops at
+walls. Walking into the camp's gate takes the player to Clearfell, and its exit back returns to the camp.
 
 | Part | State | Where |
 |---|---|---|
@@ -24,9 +24,10 @@ camp's walls.
 | Lockstep frames (`0x2f5` / `0x2f4`) | Done; the world is drawn | wave 11 |
 | Movement (C→S `0x63`, S→C `0x64`) | Done, with a server-side walk estimate | `InstanceMovementPoe2.cs`, `DirectionWalk.cs`; wave 12 |
 | Gateway in PoE2 mode | `Game_CLIENT=poe2` | `Program.Poe2.cs`, `InstanceSessionPoe2.cs`; wave 13 |
-| Walkability | Clearfell Encampment only; the estimate stops at walls (median 2 cells off live) | `scripts/walkmaps/poe2_walkmap.py`, `AreaLayouts.LoadCells`; wave 14 |
+| Walkability | Clearfell Encampment and Clearfell (seed 1); the estimate stops at walls (median 2 cells off live) | `scripts/walkmaps/poe2_walkmap.py`, `AreaLayouts.LoadCells`; wave 14 |
+| Exits, change of area | Town ↔ Clearfell: exits from a capture of the level generation, `0x2f1` / `0x29` transfer, arrival by the exit back. Exits are taken by walking into them | `AreaTransitionObjectPoe2.cs`, `Poe2Areas.cs`, `poe2-walkmap.js`; wave 19 |
 
-**Tests.** 580/580 pass:
+**Tests.** 595/595 pass:
 
 ```bash
 dotnet test tests/GameServer.Core.Tests -c Release
@@ -246,8 +247,11 @@ In rough order. Each is a wave of its own.
    - Make server objects (NPCs, stash) block the walk.
    - Retest in game the latest `DirectionWalk` fixes (the diagonal corner rule, the non-finite distance guard).
      They are covered by unit tests only.
-5. **More areas.** Map PoE2 WorldAreas hashes to ids (only `0x3f70` = `G1_town` is known), capture their walk
-   maps, and handle area transitions.
+5. **More areas.** Wave 19 did the town and Clearfell. For each further Act 1 area:
+   - visit it with `poe2_walkmap.py --area <id>` running, started in the area before;
+   - add its exit rules to `Poe2Areas` (room fragments → destinations, from its `.tgr` entranceK labels).
+
+   Also open: the exit click, the town gates not drawn, C→S `0x362`.
 6. **Then the long tail:** NPCs, monsters, skills, loot. PoE1's Gateway is the template; re-verify every id
    against PoE2.
 
@@ -273,4 +277,5 @@ In rough order. Each is a wave of its own.
 | 15 | Auth logs the PoE2 Steam client in | `6200d53` |
 | 16 | Character creation, several characters, the saved character in game | `97628ee` |
 | 17 | The class's life, mana and attributes | `167fb9e` |
-| 18 | The character screen's preview blob | the commit after `167fb9e` |
+| 18 | The character screen's preview blob | `cba781e` |
+| 19 | Exits, change of area, Clearfell | the commit after `cba781e` |

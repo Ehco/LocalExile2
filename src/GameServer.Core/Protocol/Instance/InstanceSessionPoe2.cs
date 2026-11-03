@@ -30,23 +30,40 @@ public sealed class InstanceSessionPoe2
     static readonly Dictionary<ushort, int> FixedLengths = new()
     {
         [0x1c] = 7, [0x5c] = 8, [0x62] = 4, [InstanceProtocolPoe2.AreaGeneratedId] = 11,
-        [0x17a] = 3, [0x221] = 3, [0x2e6] = 4, [0x357] = 3,
+        [0x17a] = 3, [0x221] = 3, [0x2e6] = 4, [0x357] = 3, [InstanceProtocolPoe2.LeavingId] = 3,
     };
+
+    /// <summary>How near (in cells) the walk estimate must come to an exit to take it. The client's click on an exit
+    /// is not mapped yet (the exits are not targetable), so walking into the gate takes it.</summary>
+    public const int ExitReach = 6;
 
     private readonly PlayerObjectPoe2 _player;
     private readonly string _objectType;
+    private readonly IReadOnlyList<AreaTransitionObjectPoe2> _exits;
 
     /// <param name="walkable">The area's walkability (cells the client walks on), when the server has its walk map;
     /// without it the walk estimate goes through walls.</param>
     public InstanceSessionPoe2(PlayerObjectPoe2 player, string objectType = DefaultObjectType, uint playerId = DefaultPlayerId,
-        double walkSpeed = DirectionWalk.DefaultSpeed, Func<int, int, bool>? walkable = null)
+        double walkSpeed = DirectionWalk.DefaultSpeed, Func<int, int, bool>? walkable = null,
+        IReadOnlyList<AreaTransitionObjectPoe2>? exits = null)
     {
-        (_player, _objectType, PlayerId) = (player, objectType, playerId);
+        (_player, _objectType, PlayerId, _exits) = (player, objectType, playerId, exits ?? []);
         Walk = new DirectionWalk(player.GridX, player.GridY, walkSpeed, walkable);
     }
 
     public uint PlayerId { get; }
     public DirectionWalk Walk { get; }
+
+    /// <summary>The exit the player took (the change area was sent), or null.</summary>
+    public AreaTransitionObjectPoe2? LeavingBy { get; private set; }
+
+    /// <summary>Set when the client answered the change area with C→S <see cref="InstanceProtocolPoe2.LeavingId"/>:
+    /// the server can send it to the destination.</summary>
+    public bool LeaveAcknowledged { get; private set; }
+
+    // Exits are taken only once the player has been out of reach of all of them (an arrival can be beside one).
+    private bool _awayFromExits;
+    private readonly object _lock = new();
 
     /// <summary>Set once the player is sent (after the client's 0x9a): from then on the server ends frames.</summary>
     public bool InWorld { get; private set; }
@@ -55,6 +72,16 @@ public sealed class InstanceSessionPoe2
     /// messages the server does not answer.</summary>
     public IReadOnlyList<byte[]> Handle(ReadOnlySpan<byte> message, double now)
     {
+        lock (_lock) return HandleLocked(message, now);
+    }
+
+    private IReadOnlyList<byte[]> HandleLocked(ReadOnlySpan<byte> message, double now)
+    {
+        if (LeavingBy is not null && message.Length >= 2 && BinaryPrimitives.ReadUInt16BigEndian(message) == InstanceProtocolPoe2.LeavingId)
+        {
+            LeaveAcknowledged = true;
+            return [];
+        }
         if (!InWorld && InstanceProtocolPoe2.ReadAreaGenerated(message) is not null)
         {
             InWorld = true;
@@ -70,8 +97,24 @@ public sealed class InstanceSessionPoe2
         return [];
     }
 
+    /// <summary>The server's per-frame work at <paramref name="now"/>: the change area (0x2f1) when the walk reaches an
+    /// exit. Empty otherwise, and after the player has left.</summary>
+    public IReadOnlyList<byte[]> Tick(double now)
+    {
+        lock (_lock)
+        {
+            if (!InWorld || LeavingBy is not null || _exits.Count == 0) return [];
+            var (x, y) = Walk.Cell(now);
+            var near = _exits.FirstOrDefault(e => Math.Abs(e.GridX - x) <= ExitReach && Math.Abs(e.GridY - y) <= ExitReach);
+            if (near is null) { _awayFromExits = true; return []; }
+            if (!_awayFromExits) return [];
+            LeavingBy = near;
+            return [InstanceProtocolPoe2.ChangeArea(near.DestinationHash16)];
+        }
+    }
+
     /// <summary>The local player (0x24), the player object (0x2f7), its inventories (0xdf), enter area (0x23) and the
-    /// frame length (0x2f5), in the order the client accepted live.</summary>
+    /// frame length (0x2f5), in the order the client accepted live; then the area's exits.</summary>
     public IReadOnlyList<byte[]> EnterWorld() =>
     [
         InstanceProtocolPoe2.SetLocalPlayer(PlayerId),
@@ -80,7 +123,12 @@ public sealed class InstanceSessionPoe2
             InstanceInventoriesPoe2.AddInventory(InstanceInventoriesPoe2.InventoryId(slot.Row), slot))],
         InstanceProtocolPoe2.EnterArea(PlayerId),
         InstanceProtocolPoe2.FrameLength(FrameMs),
+        .. _exits.Select((exit, i) => InstanceProtocolPoe2.CreateObject(ExitId(i),
+            InstanceEntities.ObjectTypeHash(AreaTransitionObjectPoe2.MetadataPath), exit.Blob())),
     ];
+
+    /// <summary>The entity id of the area's i-th exit.</summary>
+    public uint ExitId(int i) => PlayerId + 1 + (uint)i;
 
     /// <summary>Whether <see cref="Split"/> knows the length of messages with this id.</summary>
     public static bool CanFrame(ushort id) => FixedLengths.ContainsKey(id) || id == InstanceMovementPoe2.DirectionMoveId;
