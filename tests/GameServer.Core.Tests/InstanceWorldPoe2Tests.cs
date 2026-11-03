@@ -58,4 +58,12 @@ public class InstanceWorldPoe2Tests
         Assert.Equal("8080", Convert.ToHexString(wire.AsSpan(17, 2)));
         Assert.Equal(19 + 0x80, wire.Length);
     }
+
+    [Fact]
+    public void Server_frames_are_poe1s_moved_to_0x2f5_with_a_length_and_0x2f4_with_nothing()
+    {
+        // World-group factory 0x142186c20: 0x2f4 builds an id-only message, 0x2f5 one with a u8 at +0x10.
+        Assert.Equal("02F5" + "21", Convert.ToHexString(InstanceProtocolPoe2.FrameLength(33)));
+        Assert.Equal("02F4", Convert.ToHexString(InstanceProtocolPoe2.FrameEnd()));
+    }
 }

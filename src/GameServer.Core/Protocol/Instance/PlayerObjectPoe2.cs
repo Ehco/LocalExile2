@@ -5,10 +5,10 @@ namespace GameServer.Core.Protocol.Instance;
 /// 0x141e712a0: u8 object flags, base data (0x141e715a0), each component's vtable +0x98 deserializer in the object's
 /// component order, then tasks. Order and sizes were traced live with Frida (2026-11-03, PORTING-POE2.md wave 10):
 /// Positioned 17, Stats 13, Pathfinding 0, Buffs 2, Life 125, Animated 1, Player 39, PlayerClass 0, Inventories 2,
-/// Actor 40. Only the position and the first two Life pools are mapped; everything else is sent as zeros, which the
-/// client accepts (the HUD shows the life and energy shield values). Mana, the name and the class are not mapped yet.
+/// Actor 40. Only the position and the life, energy shield and mana pools are mapped; everything else is sent as zeros,
+/// which the client accepts (the HUD shows the three values). The name and the class are not mapped yet.
 /// </summary>
-public sealed record PlayerObjectPoe2(int GridX, int GridY, uint Life, uint EnergyShield = 0)
+public sealed record PlayerObjectPoe2(int GridX, int GridY, uint Life, uint EnergyShield = 0, uint Mana = 0)
 {
     public const int BlobLength = 242;
 
@@ -23,12 +23,12 @@ public sealed record PlayerObjectPoe2(int GridX, int GridY, uint Life, uint Ener
         w.Zeros(13);        // Stats (0x142181160)
         w.U16(0);           // Buffs (0x141db5080): count
         // Life (0x141d8c260): pool +0x1a8 (life; current life is the first u32, ≤ 0 runs the death path 0x141d87120),
-        // base +0x200, pool +0x240 (energy shield), base +0x298, pools +0x2e0 and +0x330, a fixed array of three
-        // (u32, i16) at +0x380, one more (u32, i16) at +0x398, flags u8. Pool = u32 current, u32, u16, u32, u32 (as PoE1);
-        // base = 14 bytes.
+        // base +0x200, pool +0x240 (energy shield), base +0x298, pools +0x2e0 (mana: the HUD showed 30 sent here, live
+        // 2026-11-03) and +0x330, a fixed array of three (u32, i16) at +0x380, one more (u32, i16) at +0x398, flags u8.
+        // Pool = u32 current, u32, u16, u32, u32 (as PoE1); base = 14 bytes.
         Pool(w, Life); w.Zeros(14);
         Pool(w, EnergyShield); w.Zeros(14);
-        Pool(w, 0); Pool(w, 0);
+        Pool(w, Mana); Pool(w, 0);
         w.Zeros(3 * 6).Zeros(6).U8(0);
         w.U8(0);            // Animated (0x141da66c0): flags
         w.Zeros(39);        // Player (0x141dcf4a0)

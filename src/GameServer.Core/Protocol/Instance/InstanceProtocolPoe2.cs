@@ -15,6 +15,20 @@ public static class InstanceProtocolPoe2
 
     public const ushort AreaGeneratedId = 0x9a, EnterAreaId = 0x23, LocalPlayerId = 0x24, CreateObjectId = 0x2f7;
 
+    public const ushort FrameEndId = 0x2f4, FrameLengthId = 0x2f5;
+
+    /// <summary>
+    /// S→C 0x2f4 (id only; built by the world-group factory 0x142186c20, class 0x143506450): PoE1's frame end 0x2b5. The
+    /// PoE2 client runs in lockstep on localhost (Network Mode "auto"): until frames arrive the world neither runs nor is
+    /// drawn (the screen stays the fog colour behind the HUD, mana does not regenerate). Live 2026-11-03: 0x2f5 then one
+    /// 0x2f4 every 33 ms draws the area and the player.
+    /// </summary>
+    public static byte[] FrameEnd() => [FrameEndId >> 8, FrameEndId & 0xff];
+
+    /// <summary>S→C 0x2f5 (same factory, class 0x14350c330: u8 at +0x10): PoE1's frame length 0x2b6, the length in ms of
+    /// the server frames that follow.</summary>
+    public static byte[] FrameLength(byte ms) => [FrameLengthId >> 8, FrameLengthId & 0xff, ms];
+
     /// <summary>
     /// C→S 0x9a (11 bytes): PoE1's 0x7d with the route byte. u8 (0), u32 BE tile hash, u32 BE doodad hash, sent once the
     /// client has generated the area; the values match its "Tile hash" / "Doodad hash" log lines (live 2026-11-03).

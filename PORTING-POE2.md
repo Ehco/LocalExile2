@@ -13,13 +13,13 @@ real client as the renderer — the approach proven by
 | LocalExile baseline clone | done (depth 1, upstream main) |
 | .NET 10 SDK | installed via winget |
 | `dotnet build GameServer.slnx -c Release` | **passes** |
-| `dotnet test tests/GameServer.Core.Tests` | **464/464 pass** |
+| `dotnet test tests/GameServer.Core.Tests` | **465/465 pass** |
 | PoE2 client recon (login crypto) | **done — see findings** |
 | PoE2 client recon (DH groups) | **done** — groups unchanged (finding 5) |
 | PoE2 client recon (login key blobs) | **done** — all three mapped (findings 4, 6, 7) |
 | Login handshake vs patched real client | **done** — client accepts our signed `0x0002`, C→S decrypts (wave 3) |
 | PoE2 login message set | in progress — `0x04`/`0x05`/`0x0e`/`0x10`/`0x14`/`0x15`/`0x16`/`0x18` mapped; Play reaches the instance server (wave 6) |
-| PoE2 gateway/instance protocol | in progress — the client enters Clearfell Encampment with a player entity, inventories and the in-game HUD; the world is not drawn yet (wave 10) |
+| PoE2 gateway/instance protocol | in progress — the client enters Clearfell Encampment with a player entity, inventories and the in-game HUD, and the area and the player are drawn once server frames run (wave 11); movement is not served yet |
 
 ## Recon findings (2026-10-30, client build of 2026-10-08 install)
 
@@ -618,3 +618,44 @@ Next:
   such as PoE1's "shown" bits);
 - mapping Player (name, class, experience), Stats and mana;
 - C→S `0x1c` and `0x62`.
+
+## Wave 11 — server frames: the world is drawn (2026-11-03)
+
+The grey world was the lockstep network mode, not the player entity.
+
+- **Cause.** On localhost the client's Network Mode `auto` picks lockstep, as
+  PoE1's did (`networking_type=auto` in `poe2_production_Config.ini`). A
+  lockstep client advances its world only by the frames the server ends, so
+  without them nothing ran.
+  - Nothing was drawn: the view stayed the fog colour behind the HUD, with a
+    thin vertical line at the centre.
+  - Nothing advanced: mana did not regenerate.
+  - The minimap and the HUD were still shown.
+- **The frame messages moved by +0x3f.** PoE1's `0x2b5` / `0x2b6` are built
+  by a second, world-group message factory (`0x142186c20`):
+  - `0x2f4`, id only (class `0x143506450`): PoE1's frame end `0x2b5`.
+  - `0x2f5`, a u8 at `+0x10` (class `0x14350c330`, write `0x141f3d870`, read
+    `0x141f3d8d0`): PoE1's frame length `0x2b6`.
+- **Live test.** After `0x23`, the harness sent `0x2f5 21` (33 ms), then one
+  `0x2f4` every 33 ms. Clearfell Encampment and the Witch model were drawn,
+  and mana regenerated.
+  - This holds with the plain 242-byte blob: object flags 0, Animated 0. The
+    wake-zone flag (blob byte 0 bit 1) and an AO path in Animated are not
+    needed.
+- **Mana is the third Life pool**, at blob offset 98 (component `+0x2e0`).
+  The HUD showed the 30 sent there.
+- **Positioned `+0x440`.** The value `0x7fffffff` is a sentinel, not a bad
+  height: "take the height from the terrain" (`0x141de5510`).
+
+Code:
+- `InstanceProtocolPoe2.FrameLength` / `FrameEnd` (`0x2f5` / `0x2f4`).
+- `PlayerObjectPoe2` gains `Mana`.
+- Tests are in `InstanceWorldPoe2Tests` and `PlayerObjectPoe2Tests`.
+
+Next:
+- **Movement.** A click on the ground sends no PoE1-style move. It sends C→S
+  `0x63`: 10 bytes `0063 00 BF81 BF81 000000` on the click, then
+  `0063 00 0000 0000 00`. The lockstep moves need an answer from the server.
+- Mapping Player (name, class, experience) and Stats; life and mana maxima
+  currently come from defaults (HUD 100/28, 30/34).
+- C→S `0x1c` (every 100 ms) and `0x62`.
