@@ -33,7 +33,10 @@ public class LoginServerSessionPoe2Tests
         Assert.Equal(LoginServerSession.ResultOk, result.Result);
         Assert.Equal(LoginServerSession.Poe2LoginRecordId, result.U32_10);
         Assert.Equal(LoginServerSession.FlagVerified, result.Flags0);
-        Assert.Empty(Assert.IsType<LeagueList>(replies[1]).Leagues);
+        var leagues = Assert.IsType<LeagueListPoe2>(replies[1]).Leagues;
+        // The create screen needs a league to select (0x12's sender throws without one); PoE2 has no Ruthless.
+        Assert.Equal(new[] { "Hardcore", "SSF Hardcore", "SSF Standard", "Standard" }, leagues.Select(l => l.Name).Order());
+        Assert.Equal(LeagueEntry.Main, Assert.Single(leagues, l => l.Name == "Standard").Flags0);
         Assert.Equal("steam", first.Account!.Name);
         Assert.Equal(first.Account.Id, second.Account!.Id);
     }
@@ -95,6 +98,15 @@ public class LoginServerSessionPoe2Tests
     public void Poe1_classes_map_to_their_poe2_characters_rows(CharacterClass cls, byte row)
     {
         Assert.Equal(row, LoginServerSession.Poe2ClassRow(cls));
+    }
+
+    [Theory]
+    [InlineData("Warrior")]
+    [InlineData("Druid")]
+    public void The_poe1_create_request_refuses_poe2_classes(string startState)
+    {
+        Assert.Null(LoginServerSession.ClassOf(new CreateCharacter("Brother", "Standard", 99, 99, startState, new byte[32])));
+        Assert.Equal(CharacterClass.Shadow, LoginServerSession.ClassOf(new CreateCharacter("Brother", "Standard", 99, 99, "Shadow", new byte[32])));
     }
 
     [Fact]
@@ -165,12 +177,106 @@ public class LoginServerSessionPoe2Tests
     }
 
     [Fact]
+    public void A_detail_request_for_a_listed_character_gets_its_empty_detail()
+    {
+        var session = new LoginServerSession(new AccountService(new JsonAccountStore())) { SteamAccount = "steam" };
+        RoundTrip(session, SteamLogin);
+        RoundTrip(session, new U32Message(0x18, 7));
+
+        var detail = Assert.IsType<CharacterDetailPoe2>(Assert.Single(RoundTrip(session, new CharacterDetailRequestPoe2(7, 0))));
+
+        Assert.Equal(7u, detail.RecordId);
+        Assert.Equal(0, detail.Index);
+        Assert.Empty(detail.Data);
+        Assert.Empty(detail.Pairs);
+    }
+
+    [Theory]
+    [InlineData(8u, 0)]   // another login record
+    [InlineData(7u, 1)]   // no second character
+    public void A_detail_request_the_client_would_drop_gets_no_answer(uint record, byte index)
+    {
+        var session = new LoginServerSession(new AccountService(new JsonAccountStore())) { SteamAccount = "steam" };
+        RoundTrip(session, SteamLogin);
+        RoundTrip(session, new U32Message(0x18, 7));
+
+        Assert.Empty(session.Handle(new CharacterDetailRequestPoe2(record, index)));
+    }
+
+    [Fact]
+    public void Play_enters_the_character_the_first_pair_indexes()
+    {
+        var accounts = new AccountService(new JsonAccountStore());
+        var session = new LoginServerSession(accounts) { SteamAccount = "steam", SteamCharacter = "Wanderer", Assign = _ => (0x3f70, 1) };
+        RoundTrip(session, SteamLogin);
+        accounts.CreateCharacter(session.Account!.Id, "Second", CharacterClass.Monk);
+        var list = Assert.IsType<CharacterListPoe2>(Assert.Single(RoundTrip(session, new U32Message(0x18, 0))));
+        int second = list.Entries.ToList().FindIndex(e => e.Name == "Second");
+
+        RoundTrip(session, new PlayPoe2(0, [new U32Pair((uint)second, 0)]));
+
+        Assert.Equal(10, list.Entries[second].B4e);   // the Monk's row
+        Assert.Equal("Second", session.CharacterName);
+        Assert.Equal(CharacterClass.Monk, session.CharacterClass);
+    }
+
+    static CreateCharacterPoe2 Create(string name, string startState = "DexIntFourBDefault", string league = "Standard") =>
+        new(name, league, 7, 0, 0, startState, new byte[32]);
+
+    [Fact]
+    public void Creating_a_character_sends_the_list_with_it_then_the_result()
+    {
+        var accounts = new AccountService(new JsonAccountStore());
+        var session = new LoginServerSession(accounts) { SteamAccount = "steam", SteamCharacter = "Wanderer" };
+        RoundTrip(session, SteamLogin);
+        RoundTrip(session, new U32Message(0x18, 7));
+
+        var replies = RoundTrip(session, Create("Brother"));
+
+        var list = Assert.IsType<CharacterListPoe2>(replies[0]);
+        Assert.Equal(7u, list.U32_70);
+        var entry = Assert.Single(list.Entries, e => e.Name == "Brother");
+        Assert.Equal(10, entry.B4e);   // the Monk's row
+        Assert.Equal(0, entry.B51 & 0x08);   // bit 3 hides an entry from the create screen's lookup
+        var result = Assert.IsType<CreateCharacterResultPoe2>(replies[1]);
+        Assert.Equal(LoginServerSession.ResultOk, result.Result);
+        Assert.Equal(7u, result.RecordId);
+        Assert.False(result.Tracking);
+        var saved = Assert.Single(accounts.Characters(session.Account!.Id), c => c.Name == "Brother");
+        Assert.Equal(CharacterClass.Monk, saved.Class);
+        Assert.Equal("Standard", saved.League);
+    }
+
+    [Theory]
+    [InlineData("Brother", "WitchActTwo", "Standard", LoginServerSession.ResultInvalidClass)]
+    [InlineData("Brother", "IntFourDefault", "Allflame", LoginServerSession.ResultLeagueDoesNotExist)]
+    [InlineData("Brother", "IntFourDefault", "Ruthless", LoginServerSession.ResultLeagueDoesNotExist)]
+    [InlineData("Wanderer", "IntFourDefault", "Standard", LoginServerSession.ResultCharacterNameTaken)]
+    [InlineData("Bo", "IntFourDefault", "Standard", LoginServerSession.ResultCharacterNameTooShort)]
+    public void A_refused_creation_sends_only_the_result(string name, string startState, string league, ushort expected)
+    {
+        var session = new LoginServerSession(new AccountService(new JsonAccountStore())) { SteamAccount = "steam", SteamCharacter = "Wanderer" };
+        RoundTrip(session, SteamLogin);
+
+        var result = Assert.IsType<CreateCharacterResultPoe2>(Assert.Single(RoundTrip(session, Create(name, startState, league))));
+
+        Assert.Equal(expected, result.Result);
+    }
+
+    [Fact]
+    public void A_creation_before_a_login_gets_no_answer()
+    {
+        Assert.Empty(new LoginServerSession(new AccountService(new JsonAccountStore())).Handle(Create("Brother")));
+    }
+
+    [Fact]
     public void Poe2_requests_before_a_login_get_no_answer()
     {
         var session = new LoginServerSession(new AccountService(new JsonAccountStore())) { Assign = _ => (0x3f70, 1) };
 
         Assert.Empty(session.Handle(new U32Message(0x18, 0)));
         Assert.Empty(session.Handle(new PlayPoe2(0, [])));
+        Assert.Empty(session.Handle(new CharacterDetailRequestPoe2(0, 0)));
     }
 
     [Fact]

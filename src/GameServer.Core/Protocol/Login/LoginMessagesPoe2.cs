@@ -75,13 +75,26 @@ public sealed record CharacterListPoe2(uint U32_70, IReadOnlyList<CharacterEntry
         w.U32(U32_70).U8(checked((byte)Entries.Count));
         foreach (var e in Entries) e.Write(w);
         w.U8(B28).U8(B29).U16(U16_74).U16(U16_76).Blob(Data);
-        InstanceProtocol.CompactUInt(w, (uint)Pairs.Count);
-        foreach (var p in Pairs)
+        WritePairs(w, Pairs);
+        w.U32(U32_68).U32(U32_6c);
+    }
+
+    internal static void WritePairs(LoginWriter w, IReadOnlyList<U16CompactPair> pairs)
+    {
+        InstanceProtocol.CompactUInt(w, (uint)pairs.Count);
+        foreach (var p in pairs)
         {
             w.U16(p.Key);
             InstanceProtocol.CompactInt(w, p.Value);
         }
-        w.U32(U32_68).U32(U32_6c);
+    }
+
+    internal static List<U16CompactPair> ReadPairs(ref LoginReader r)
+    {
+        uint count = r.CompactUInt();
+        var pairs = new List<U16CompactPair>();
+        for (uint i = 0; i < count && !r.Short; i++) pairs.Add(new(r.U16(), r.CompactInt()));
+        return pairs;
     }
     internal static CharacterListPoe2 Read(ushort id, ref LoginReader r)
     {
@@ -92,9 +105,7 @@ public sealed record CharacterListPoe2(uint U32_70, IReadOnlyList<CharacterEntry
         byte b28 = r.U8(), b29 = r.U8();
         ushort u74 = r.U16(), u76 = r.U16();
         byte[] data = r.Blob();
-        uint pairCount = r.CompactUInt();
-        var pairs = new List<U16CompactPair>();
-        for (uint i = 0; i < pairCount && !r.Short; i++) pairs.Add(new(r.U16(), r.CompactInt()));
+        var pairs = ReadPairs(ref r);
         return new(u70, entries, b28, b29, u74, u76, data, pairs, r.U32(), r.U32());
     }
 }
@@ -105,8 +116,9 @@ public readonly record struct U32Pair(uint A, uint B);
 /// <summary>
 /// C→S 0x0e on PoE2 (vtable 0x143506470, write 0x1420e47e0, sender 0x1420e9ff0): Play. PoE1 sent u8 realm + u32 index;
 /// PoE2 sends one byte (bits 0–6: the realm byte at 0x143a0c068, bit 7: the sender's bool argument), then a compact count
-/// and that many u32 pairs. With one character selected the client sent flags 0 and the pair (0, 0) (live 2026-11-03),
-/// then waited ("Contacting Server...") for the instance assignment 0x14.
+/// and one pair per local player slot (the screen has two): A = the character's index in the 0x15 list, B = the 0x04
+/// record id that list was sent for (0x1420e9ff0 looks the record up by B, then bounds-checks A). With one character
+/// the client sent flags 0 and the pair (0, 0) (live 2026-11-03), then waited ("Contacting Server...") for 0x14.
 /// </summary>
 public sealed record PlayPoe2(byte Flags, IReadOnlyList<U32Pair> Pairs) : ILoginMessage
 {
@@ -133,7 +145,7 @@ public sealed record PlayPoe2(byte Flags, IReadOnlyList<U32Pair> Pairs) : ILogin
 /// (0x140f08950) queues (RecordId = the 0x04 record's U32_10, Index = key of its per-character cache at screen+0x2b8)
 /// through 0x1420ea450 when that character's cached entry is missing or flagged dirty (+0x3d); the login update
 /// 0x1420e6d40 pops the queue on a timer and sends it only if a login record with that id exists. Seen live right after
-/// 0x15 as 0010 00000000 00 (2026-11-03). The reply is probably S→C 0x16 (not verified).
+/// 0x15 as 0010 00000000 00 (2026-11-03). The reply is S→C 0x11 (<see cref="CharacterDetailPoe2"/>).
 /// </summary>
 public sealed record CharacterDetailRequestPoe2(uint RecordId, byte Index) : ILoginMessage
 {
@@ -144,11 +156,114 @@ public sealed record CharacterDetailRequestPoe2(uint RecordId, byte Index) : ILo
 }
 
 /// <summary>
+/// S→C 0x11 on PoE2 (vtable near 0x14350a038, write 0x14214e6b0, read 0x14214e7d0): one character's details, the
+/// answer to C→S 0x10. The tail is 0x15's (U16_74 to U32_6c), for one entry: dispatch case 0x1420e8cc6 decodes Data into
+/// 31 records of 0x80 bytes (0x1420e5c10) and hands it to the listeners at login+0xd08. The character screen's listener
+/// 0x140f0c090 drops it unless RecordId is its record's, then caches the entry Index (name and class from the 0x15 entry)
+/// and clears its dirty flag, which ends the 0x10 requests. An empty detail is what 0x15 already sends for B28.
+/// </summary>
+public sealed record CharacterDetailPoe2(uint RecordId, byte Index, ushort A, ushort B, byte[] Data,
+    IReadOnlyList<U16CompactPair> Pairs, uint C, uint D) : ILoginMessage
+{
+    public const ushort Id = 0x11;
+    public ushort MessageId => Id;
+    public void WriteFields(LoginWriter w)
+    {
+        w.U32(RecordId).U8(Index).U16(A).U16(B).Blob(Data);
+        CharacterListPoe2.WritePairs(w, Pairs);
+        w.U32(C).U32(D);
+    }
+    internal static CharacterDetailPoe2 Read(ushort id, ref LoginReader r)
+    {
+        uint record = r.U32();
+        byte index = r.U8();
+        ushort a = r.U16(), b = r.U16();
+        byte[] data = r.Blob();
+        var pairs = CharacterListPoe2.ReadPairs(ref r);
+        return new(record, index, a, b, data, pairs, r.U32(), r.U32());
+    }
+}
+
+/// <summary>
 /// S→C 0x16 on PoE2 (vtable 0x143509e58, write 0x14214ddd0, read 0x14214de80): u32 +0x10, u16 +0x14, u16 +0x16, all
-/// handed to the listeners at login+0x288 (dispatch 0x1420e8f26). Meaning unknown; likely the answer to C→S 0x10.
+/// handed to the listeners at login+0x288 (dispatch 0x1420e8f26). The character screen's listener 0x140f0b340 only
+/// passes them to its two slot panels (vfunc +0x38): a notice to the UI, not the answer to 0x10. Not sent.
 /// </summary>
 public sealed record U32U16U16(ushort MessageId, uint U32, ushort A, ushort B) : ILoginMessage
 {
     public void WriteFields(LoginWriter w) => w.U32(U32).U16(A).U16(B);
     internal static U32U16U16 Read(ushort id, ref LoginReader r) => new(id, r.U32(), r.U16(), r.U16());
+}
+
+/// <summary>
+/// C→S 0x12 on PoE2 (vtable 0x143506430, write 0x1420e4cc0, read 0x1420e4e30, sender 0x1420e9ce0 from the create
+/// screen 0x140ece810): create a character. PoE1's fields with UTF-8 Name and League and a third u32: RecordId is the
+/// login record's id (the 0x04 U32_10, via [ui+0x328]), U54 and U58 are always 0, StartState is the chosen
+/// CharacterStartStates Id ("IntFourDefault" for the Witch), PasswordDigest the private league password's digest (zeros
+/// without one). The client throws if no league is selected, so 0x1b must offer one.
+/// </summary>
+public sealed record CreateCharacterPoe2(string Name, string League, uint RecordId, uint U54, uint U58, string StartState,
+    byte[] PasswordDigest) : ILoginMessage
+{
+    public const ushort Id = 0x12;
+    public ushort MessageId => Id;
+    public void WriteFields(LoginWriter w) =>
+        w.Str(Name).Str(League).U32(RecordId).U32(U54).U32(U58).WStr(StartState).Fixed(PasswordDigest, 32);
+    internal static CreateCharacterPoe2 Read(ushort id, ref LoginReader r) =>
+        new(r.Str(), r.Str(), r.U32(), r.U32(), r.U32(), r.WStr(), r.Fixed(32));
+}
+
+/// <summary>
+/// S→C 0x13 on PoE2 (vtable 0x143509e98, write 0x14214eb50, read 0x14214ebf0): PoE1's result and tracking flag plus the
+/// login record id, which only selects the record for the tracking-conversion request (when Tracking is set). On 0 the
+/// create screen (listener 0x140ed2ab0, then 0x140ecee50) finds the new character by exact name in the last 0x15 list
+/// (skipping entries whose B51 has bit 3) and sends Play with (its index, the record id): send the list first.
+/// </summary>
+public sealed record CreateCharacterResultPoe2(ushort Result, bool Tracking, uint RecordId) : ILoginMessage
+{
+    public const ushort Id = 0x13;
+    public ushort MessageId => Id;
+    public void WriteFields(LoginWriter w) => w.U16(Result).Bool(Tracking).U32(RecordId);
+    internal static CreateCharacterResultPoe2 Read(ushort id, ref LoginReader r) => new(r.U16(), r.Bool(), r.U32());
+}
+
+/// <summary>A PoE2 league (0xe8 bytes, read by 0x142716e10): PoE1's <see cref="LeagueEntry"/> without RawC4, with one
+/// more byte, C2 (+0xc2).</summary>
+public sealed record LeagueEntryPoe2(string Name, string Description, string SsfParent, string HardcoreParent,
+    string RuthlessParent, ulong RawD0, ulong RawD8, ulong RawC8, byte Flags0, byte Flags1, byte Flags2, byte StartStateSet,
+    byte C1, byte C2)
+{
+    public static LeagueEntryPoe2 From(LeagueEntry e) => new(e.Name, e.Description, e.SsfParent, e.HardcoreParent,
+        e.RuthlessParent, e.RawD0, e.RawD8, e.RawC8, e.Flags0, e.Flags1, e.Flags2, e.StartStateSet, e.C1, 0);
+
+    internal void Write(LoginWriter w) =>
+        w.WStr(Name).WStr(Description).WStr(SsfParent).WStr(HardcoreParent).WStr(RuthlessParent).RawU64(RawD0)
+         .RawU64(RawD8).RawU64(RawC8).U8(Flags0).U8(Flags1).U8(Flags2).U8(StartStateSet).U8(C1).U8(C2);
+    internal static LeagueEntryPoe2 Read(ref LoginReader r) =>
+        new(r.WStr(), r.WStr(), r.WStr(), r.WStr(), r.WStr(), r.RawU64(), r.RawU64(), r.RawU64(),
+            r.U8(), r.U8(), r.U8(), r.U8(), r.U8(), r.U8());
+}
+
+/// <summary>S→C 0x1b on PoE2 (vtable 0x143509fd8, read 0x14214f1f0): PoE1's <see cref="LeagueList"/> with
+/// <see cref="LeagueEntryPoe2"/> entries. Dispatch 0x1420e930e replaces (or appends to) the list at login+0xf08.</summary>
+public sealed record LeagueListPoe2(long ServerTime, IReadOnlyList<LeagueEntryPoe2> Leagues, bool Flag0, bool Append)
+    : ILoginMessage
+{
+    public const ushort Id = 0x1b;
+    public ushort MessageId => Id;
+    public void WriteFields(LoginWriter w)
+    {
+        w.RawU64((ulong)ServerTime).U32((uint)Leagues.Count);
+        foreach (var e in Leagues) e.Write(w);
+        w.U8((byte)((Flag0 ? 1 : 0) | (Append ? 2 : 0)));
+    }
+    internal static LeagueListPoe2 Read(ushort id, ref LoginReader r)
+    {
+        long t = (long)r.RawU64();
+        uint n = r.U32();
+        var list = new List<LeagueEntryPoe2>();
+        for (uint i = 0; i < n && !r.Short; i++) list.Add(LeagueEntryPoe2.Read(ref r));
+        byte f = r.U8();
+        return new(t, list, (f & 1) != 0, (f & 2) != 0);
+    }
 }

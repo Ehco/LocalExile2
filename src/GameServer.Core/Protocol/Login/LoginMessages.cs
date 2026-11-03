@@ -427,16 +427,18 @@ public static class LoginCodec
     };
 
     // PoE2 (PathOfExileSteam.exe, factory 0x14214fbe0): PoE1's tables with the layouts that changed (LoginMessagesPoe2.cs)
-    // plus two ids PoE1 lacks: C→S 0x10 and S→C 0x16. C→S 0x18 (character list request, sender 0x140f03f10) gained a
-    // u32: the U32_10 of the 0x04 that logged in, read back from the record at login+0xef0. S→C 0x14 (reader 0x14214ee60)
-    // keeps PoE1's InstanceInfo layout.
+    // plus two ids PoE1 lacks: C→S 0x10 and S→C 0x16. S→C 0x11 is 0x10's answer, a character detail. C→S 0x18
+    // (character list request, sender 0x140f03f10) gained a u32: the U32_10 of the 0x04 that logged in, read back from
+    // the record at login+0xef0. S→C 0x14 (reader 0x14214ee60) keeps PoE1's InstanceInfo layout.
     private static readonly Dictionary<ushort, Reader> Poe2ServerToClient = new(ServerToClient)
     {
-        [0x04] = LoginResultPoe2.Read, [0x15] = CharacterListPoe2.Read, [0x16] = U32U16U16.Read,
+        [0x04] = LoginResultPoe2.Read, [0x11] = CharacterDetailPoe2.Read, [0x13] = CreateCharacterResultPoe2.Read,
+        [0x15] = CharacterListPoe2.Read, [0x16] = U32U16U16.Read, [0x1b] = LeagueListPoe2.Read,
     };
     private static readonly Dictionary<ushort, Reader> Poe2ClientToServer = new(ClientToServer)
     {
-        [0x05] = TokenLoginPoe2.Read, [0x0e] = PlayPoe2.Read, [0x10] = CharacterDetailRequestPoe2.Read, [0x18] = U32Message.Read,
+        [0x05] = TokenLoginPoe2.Read, [0x0e] = PlayPoe2.Read, [0x10] = CharacterDetailRequestPoe2.Read,
+        [0x12] = CreateCharacterPoe2.Read, [0x18] = U32Message.Read,
     };
 
     public static bool IsKnown(LoginDirection dir, ushort id, LoginDialect dialect = LoginDialect.Poe1) =>

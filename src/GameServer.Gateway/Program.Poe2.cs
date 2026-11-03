@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
+using GameServer.Core.Accounts;
 using GameServer.Core.Protocol.Instance;
 
 // The instance server for the PoE2 client (Game_CLIENT=poe2; PORTING-POE2.md, wave 13). It needs none of the PoE1
@@ -9,9 +10,12 @@ using GameServer.Core.Protocol.Instance;
 // lockstep client neither runs nor draws its world.
 partial class Program
 {
-    // Clearfell Encampment (WorldAreas G1_town, HASH16), for a ticket Auth does not know: Auth does not log PoE2 clients
-    // in yet, so a local test login (a harness) has no ticket there.
+    // Clearfell Encampment (WorldAreas G1_town, HASH16), for a ticket Auth does not know (a local test login through
+    // the harness has none).
     const ushort Poe2FallbackArea = 0x3f70;
+
+    // What the Gateway enters a PoE2 client with: Auth's area and character for the ticket.
+    sealed record Poe2Ticket(ushort Area, uint Seed, ulong Instance, string Character, CharacterClass Class, int Level);
 
     static bool IsPoe2Client =>
         string.Equals(Environment.GetEnvironmentVariable("Game_CLIENT"), "poe2", StringComparison.OrdinalIgnoreCase);
@@ -77,7 +81,8 @@ partial class Program
                     }
                 }
                 Console.WriteLine($"[gateway] {remote} PoE2 opening: ticket=0x{opening.Ticket:x8} flag={opening.Flag}");
-                var (area, seed, instance) = await ResolvePoe2Ticket(remote, opening.Ticket);
+                var ticket = await ResolvePoe2Ticket(remote, opening.Ticket);
+                var (area, seed, instance) = (ticket.Area, ticket.Seed, ticket.Instance);
 
                 var ciphers = keyring.Ciphers(opening.Ticket);
                 var gate = new SemaphoreSlim(1, 1);
@@ -98,9 +103,14 @@ partial class Program
                 await Send(new AreaInstancePoe2(InstanceId: (uint)instance, AreaHash: area, Seed: seed, Level: 0).Encode(),
                     $"0x1e area 0x{area:x4} seed {seed} instance {instance}");
 
+                var row = Poe2Classes.Of(ticket.Class);
+                Console.WriteLine($"[gateway] {remote} {ticket.Character}: level {ticket.Level} {ticket.Class} ({row.ObjectType})");
+                // The level start (ExperienceLevels: PoE2 0.5.5e's matches PoE1's) needs data/tables/ExperienceLevels.json;
+                // without it the experience is 0 and the client shows level 1.
                 var session = new InstanceSessionPoe2(new PlayerObjectPoe2(
-                    InstanceSessionPoe2.G1TownSpawn.X, InstanceSessionPoe2.G1TownSpawn.Y, Life: 100, Mana: 30),
-                    walkable: Poe2Walkability(remote, area, seed));
+                    InstanceSessionPoe2.G1TownSpawn.X, InstanceSessionPoe2.G1TownSpawn.Y, Life: 100, Mana: 30,
+                    Name: ticket.Character, ClassRow: row.Index, Experience: CharacterStats.ExperienceFor(ticket.Level)),
+                    objectType: row.ObjectType, walkable: Poe2Walkability(remote, area, seed));
                 var clock = Stopwatch.StartNew();
                 byte[] unread = [.. pending.Skip(InstanceOpeningPoe2.Length)];
                 ciphers.Receive.Process(unread);
@@ -146,14 +156,19 @@ partial class Program
         }
     }
 
-    // Auth's area, seed and instance for the ticket, or Clearfell Encampment for a ticket it does not know.
-    static async Task<(ushort Area, uint Seed, ulong Instance)> ResolvePoe2Ticket(string remote, uint ticket)
+    // Auth's area, seed, instance and character for the ticket, or a level 1 Witch named Exile in Clearfell
+    // Encampment for a ticket it does not know.
+    static async Task<Poe2Ticket> ResolvePoe2Ticket(string remote, uint ticket)
     {
         var resolved = await InstanceControl.CallAsync(new ControlRequest { Op = "resolve", Ticket = ticket });
-        if (resolved.Ok && resolved.Area != 0) return (resolved.Area, resolved.Seed == 0 ? 1 : resolved.Seed, resolved.Instance);
+        if (resolved.Ok && resolved.Area != 0)
+            return new(resolved.Area, resolved.Seed == 0 ? 1 : resolved.Seed, resolved.Instance,
+                string.IsNullOrEmpty(resolved.Character) ? "Exile" : resolved.Character,
+                Enum.IsDefined((CharacterClass)resolved.Class) ? (CharacterClass)resolved.Class : CharacterClass.Witch,
+                Math.Clamp(resolved.Level, 1, 100));
         Console.WriteLine($"[gateway] {remote} ticket 0x{ticket:x8} not resolved ({resolved.Error ?? "unknown area"}); " +
                           "Clearfell Encampment, seed 1, instance 1");
-        return (Poe2FallbackArea, 1, 1);
+        return new(Poe2FallbackArea, 1, 1, "Exile", CharacterClass.Witch, 1);
     }
 
     // The area's walk map, data/walkability/<id>_seed<seed>.bin (scripts/walkmaps/poe2_walkmap.py), or null: the walk

@@ -19,8 +19,8 @@ real client as the renderer — the approach proven by
 | PoE2 client recon (DH groups) | **done** — groups unchanged (finding 5) |
 | PoE2 client recon (login key blobs) | **done** — all three mapped (findings 4, 6, 7) |
 | Login handshake vs patched real client | **done** — client accepts our signed `0x0002`, C→S decrypts (wave 3) |
-| PoE2 login message set | in progress — `0x04`/`0x05`/`0x0e`/`0x10`/`0x14`/`0x15`/`0x16`/`0x18` mapped; Play reaches the instance server (wave 6) |
-| PoE2 gateway/instance protocol | in progress — the client enters Clearfell Encampment with a player entity, inventories and the in-game HUD, the area and the player are drawn once server frames run (wave 11), and the player walks when the server echoes its direction moves (wave 12); the Gateway serves all of it with `Game_CLIENT=poe2` (wave 13), and its walk estimate stops at the camp's walls (wave 14); Auth logs the Steam client in and sends it there (wave 15) |
+| PoE2 login message set | in progress — `0x04`/`0x05`/`0x0e`/`0x10`/`0x11`/`0x12`/`0x13`/`0x14`/`0x15`/`0x16`/`0x18`/`0x1b` mapped; Play reaches the instance server (wave 6); characters are created and chosen (wave 16) |
+| PoE2 gateway/instance protocol | in progress — the client enters Clearfell Encampment with a player entity, inventories and the in-game HUD, the area and the player are drawn once server frames run (wave 11), and the player walks when the server echoes its direction moves (wave 12); the Gateway serves all of it with `Game_CLIENT=poe2` (wave 13), and its walk estimate stops at the camp's walls (wave 14); Auth logs the Steam client in and sends it there (wave 15), and the player is the saved character: name, class model and level (wave 16) |
 
 ## Recon findings (2026-10-30, client build of 2026-10-08 install)
 
@@ -882,3 +882,118 @@ Limits:
 - The character still plays as the IntFour template, whatever its class,
   name or level.
 - Every PoE2 login starts in Clearfell Encampment.
+
+## Wave 16 — character creation, several characters, the saved character in game (2026-11-04)
+
+The PoE2 client now creates characters, chooses between them, and enters the
+game as the character it chose: its name, class (model) and level come from
+the save.
+
+- **Classes.** `CharacterClass` keeps PoE1's values 0–6 (Characters.dat
+  IntegerIds) and appends PoE2's own classes: Warrior 7, Sorceress 8,
+  Huntress 9, Mercenary 10, Monk 11, Druid 12. `Poe2Classes` maps each class to
+  its row of PoE2's `Characters.datc64` (0.5.5e, 12 rows), its object type and
+  its default CharacterStartStates Id:
+
+  | Row | Class | Object type | Start state |
+  |---|---|---|---|
+  | 0 | Marauder | `Metadata/Characters/Str/StrFour` | `StrFourDefault` |
+  | 1 | Witch | `Metadata/Characters/Int/IntFour` | `IntFourDefault` |
+  | 2 | Ranger | `Metadata/Characters/Dex/DexFour` | `DexFourDefault` |
+  | 3 | Duelist | `Metadata/Characters/StrDex/StrDexFour` | `StrDexFourDefault` |
+  | 4 | Shadow | `Metadata/Characters/DexInt/DexIntFour` | `DexIntFourDefault` |
+  | 5 | Templar | `Metadata/Characters/StrInt/StrIntFour` | `StrIntFourDefault` |
+  | 6 | Warrior | `Metadata/Characters/Str/StrFourb` | `StrFourBDefault` |
+  | 7 | Sorceress | `Metadata/Characters/Int/IntFourb` | `IntFourBDefault` |
+  | 8 | Huntress | `Metadata/Characters/Dex/DexFourb` | `DexFourBDefault` |
+  | 9 | Mercenary | `Metadata/Characters/StrDex/StrDexFourb` | `StrDexFourBDefault` |
+  | 10 | Monk | `Metadata/Characters/DexInt/DexIntFourb` | `DexIntFourBDefault` |
+  | 11 | Druid | `Metadata/Characters/StrInt/StrIntFourb` | `StrIntFourBDefault` |
+
+  CharacterStartStates rows 0–11 are these defaults; their Characters key
+  (the u64 at row byte 8) is the row number. Rows 12 on are act and premade
+  states (`WitchActTwo`, `WarriorGamepadPremade`, …), not mapped: creating
+  with one is refused as an invalid class.
+- **Leagues `0x1b`.** The create screen needs one: the sender of `0x12`
+  throws when no league is selected. A PoE2 league entry is PoE1's without
+  the trailing `RawC4`, with one more byte `C2` (`+0xc2`) after `C1` (reader
+  `0x142716e10`; outer message unchanged). Auth sends the Standard family
+  without Ruthless (Standard, Hardcore, SSF Standard, SSF Hardcore). The
+  screen showed the Standard card with its Solo Self-Found and Hardcore boxes.
+- **C→S `0x12` create** (vtable `0x143506430`, write `0x1420e4cc0`, sender
+  `0x1420e9ce0`, create screen `0x140ece810`): UTF-8 `Str` name, UTF-8 `Str`
+  league, u32 login record id, u32 0, u32 0, `WStr` start state, 32-byte
+  password digest. PoE1 had UTF-16 name and league and two u32s.
+- **S→C `0x13` result** (vtable `0x143509e98`): u16 result, bool tracking,
+  u32 login record id (new; it only picks the record for the tracking POST).
+  On 0, the create screen (listener `0x140ed2ab0`, then `0x140ecee50`) looks
+  the new character up by exact name in the last `0x15` (skipping entries
+  whose `B51` has bit 3) and sends Play with it. As on PoE1, Auth sends the
+  list first, then `0x13`.
+- **Play `0x0e`.** One pair per local player slot (the screen has two):
+  `A` is the character's index in the `0x15` list, `B` the login record id
+  (`0x1420e9ff0` looks the record up by `B`, then bounds-checks `A`). Wave 15's
+  guess was right.
+- **C→S `0x10` is answered by S→C `0x11`**, not `0x16`.
+  - `0x11` (writer `0x14214e6b0`, reader `0x14214e7d0`): u32 record id,
+    u8 index, then the tail of `0x15` for one character (u16, u16, u16-counted
+    blob, compact pair list, u32, u32).
+  - Dispatch `0x1420e8cc6` decodes the blob into 31 records of `0x80` bytes
+    and hands it to the listeners at `login+0xd08`. The character screen's
+    listener `0x140f0c090` caches the entry and clears its dirty flag, which
+    ends the `0x10` requests.
+  - Auth answers with an empty detail, for the last `0x18` record and an
+    existing index only. The blob (the character's appearance) is not mapped.
+  - `0x16` goes to `login+0x288`, where the screen's listener `0x140f0b340`
+    only passes it to its two slot panels: a UI notice. Not sent.
+- **The player object from the save.** The Gateway takes the name, class and
+  level Auth resolved for the ticket. It creates the player as the class's
+  object type (`StrFourb` for a Warrior). It writes the start of the Player
+  component (`0x141dcf4a0`), after Animated at blob offset 160:
+  - u32-counted UTF-16 name;
+  - u8 Characters row (compared with PlayerClass `+0x158`);
+  - u32 experience (`0x141dd1360` derives the level, `+0x204`).
+
+  The rest of the component stays zero:
+  - u32, u32, u16, u16;
+  - two flag sets (`0x141deebf0`, u16 count);
+  - 5 raw bytes;
+  - two u16 dat keys;
+  - u8 flags;
+  - u8, u8;
+  - a u8 count of u32;
+  - a u8 count (`0x141deecb0`).
+
+  An empty name gives PoE1's 39 bytes.
+- **Experience.** PoE2 0.5.5e's `ExperienceLevels.datc64` matches PoE1's
+  (level 2 at 525, 3 at 1760, 100 at 4 250 334 444). The Gateway takes the
+  level's start from `data/tables/ExperienceLevels.json`, as PoE1 does.
+  Without that file the experience is 0 and the client shows level 1, which
+  is right for new characters.
+
+**Live test (2026-11-04).** Auth and the Gateway, `Game_CLIENT=poe2`:
+- the client logged in. The `0x1b` leagues decoded; `0x10` got its `0x11`.
+- It pressed Play on "Exile" by itself. The character panel showed "Exile,
+  Level 1 Witch".
+- "Exit to Log In Screen" brought back the character screen.
+- Create → Standard → Warrior → "Brakka":
+  - Auth decoded `0x12` (`StrFourBDefault`) and sent the list, then `0x13`;
+  - the client played the new character's intro, then sent Play `(1, 0)`;
+  - the Gateway created the player as `StrFourb`;
+  - the character panel showed "Brakka, Level 1 Warrior", with the Warrior's
+    portrait and model.
+- Back on the character screen, both characters were listed. Selecting
+  "Exile" and pressing Play sent `(0, 0)` and entered the Witch.
+
+Limits:
+- "Exit to Character Selection" sends C→S `0x173` (3 bytes) to the Gateway
+  and waits for an answer we do not know. "Exit to Log In Screen" works.
+- The `0x11` detail is empty: the character screen shows each class's default
+  look, not the character's gear.
+- Only the class defaults are mapped among the start states.
+- PoE1 and PoE2 share the save database. PoE1's create request refuses the
+  PoE2 classes, but a PoE2 character is not hidden from a PoE1 client that
+  logs into the same account (the Steam account has a random password, so
+  this takes a dev password reset).
+- Every PoE2 character still starts in Clearfell Encampment, with the
+  Gateway's fixed life, mana and an empty skill bar.

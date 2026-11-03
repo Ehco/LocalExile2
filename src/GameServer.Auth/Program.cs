@@ -248,6 +248,7 @@ static ILoginMessage Redact(ILoginMessage m) => m switch
     EpicLogin e => e with { Token = [] },
     TwoDigests d => d with { DigestA = [], DigestB = [] },
     CreateCharacter r => r with { PasswordDigest = [] },
+    CreateCharacterPoe2 r => r with { PasswordDigest = [] },
     _ => m,
 };
 

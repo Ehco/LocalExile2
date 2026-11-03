@@ -5,12 +5,19 @@ namespace GameServer.Core.Protocol.Instance;
 /// 0x141e712a0: u8 object flags, base data (0x141e715a0), each component's vtable +0x98 deserializer in the object's
 /// component order, then tasks. Order and sizes were traced live with Frida (2026-11-03, PORTING-POE2.md wave 10):
 /// Positioned 17, Stats 13, Pathfinding 0, Buffs 2, Life 125, Animated 1, Player 39, PlayerClass 0, Inventories 2,
-/// Actor 40. Only the position and the life, energy shield and mana pools are mapped; everything else is sent as zeros,
-/// which the client accepts (the HUD shows the three values). The name and the class are not mapped yet.
+/// Actor 40. The position, the life, energy shield and mana pools, and the Player component's name, class and experience
+/// are mapped; everything else is sent as zeros, which the client accepts (the HUD shows the three values).
 /// </summary>
-public sealed record PlayerObjectPoe2(int GridX, int GridY, uint Life, uint EnergyShield = 0, uint Mana = 0)
+/// <param name="ClassRow">Characters.datc64 row (<see cref="Accounts.Poe2Classes"/>); 1 is the Witch.</param>
+/// <param name="Experience">The client derives the level from it (0x141dd1360 → +0x204), as PoE1 does.</param>
+public sealed record PlayerObjectPoe2(int GridX, int GridY, uint Life, uint EnergyShield = 0, uint Mana = 0,
+    string Name = "", byte ClassRow = 1, uint Experience = 0)
 {
+    /// <summary>The blob's length with an empty name; each name character adds two bytes.</summary>
     public const int BlobLength = 242;
+
+    /// <summary>Where the Player component starts in the blob.</summary>
+    public const int PlayerOffset = 160;
 
     public byte[] Blob()
     {
@@ -31,7 +38,12 @@ public sealed record PlayerObjectPoe2(int GridX, int GridY, uint Life, uint Ener
         Pool(w, Mana); Pool(w, 0);
         w.Zeros(3 * 6).Zeros(6).U8(0);
         w.U8(0);            // Animated (0x141da66c0): flags
-        w.Zeros(39);        // Player (0x141dcf4a0)
+        // Player (0x141dcf4a0): u32-counted UTF-16 name (0x1421c04a0 → +0x1b0), u8 Characters row (PlayerClass +0x158),
+        // u32 experience, u32 +0x1d0, u32 +0x1d4, u16 +0x200, u16 +0x202, two flag sets (0x141deebf0, u16 count), 5 raw
+        // bytes +0x278, two u16 dat keys (+0x280, +0x290), u8 flags (bits 0-3), u8 +0x205, u8 +0x3e7, u8 count of u32,
+        // u8 count (0x141deecb0). 35 bytes after an empty name.
+        w.WStr32(Name).U8(ClassRow).U32(Experience);
+        w.Zeros(30);
         w.U8(0).U8(0);      // Inventories (0x1416e6d70)
         w.Zeros(40);        // Actor (0x1416d8210): 40 bytes while alive (48 at zero life)
         w.U8(0);            // tasks (0x141e7dd60)

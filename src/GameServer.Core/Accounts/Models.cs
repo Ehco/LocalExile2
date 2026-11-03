@@ -5,7 +5,9 @@ namespace GameServer.Core.Accounts;
 public sealed record Account(Guid Id, string Name, string PasswordHash, string PasswordSalt, DateTimeOffset CreatedUtc,
     string? ClientDigestHash = null);
 
-public enum CharacterClass { Scion, Marauder, Ranger, Witch, Duelist, Templar, Shadow }
+/// <summary>PoE1's classes are Characters.dat IntegerIds (0 to 6); PoE2's own six classes follow them (Poe2Classes maps
+/// both to PoE2's Characters.datc64 rows).</summary>
+public enum CharacterClass { Scion, Marauder, Ranger, Witch, Duelist, Templar, Shadow, Warrior, Sorceress, Huntress, Mercenary, Monk, Druid }
 
 /// <param name="AreaId">The dev JSON protocol's current area (GameSession); the official login flow does not use it.</param>
 /// <param name="LastTown">WorldAreas Id of the last town the character entered (Auth records it when the Gateway resolves

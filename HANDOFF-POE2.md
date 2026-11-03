@@ -4,27 +4,29 @@ Read this first if you are picking up the PoE2 work. It covers where things stan
 from nothing, how to run a live test, and what to do next. The wave-by-wave findings (addresses, message layouts,
 live results) are in [PORTING-POE2.md](PORTING-POE2.md). This file points into it and does not repeat it.
 
-Last updated 2026-11-04, after wave 15.
+Last updated 2026-11-04, after wave 16.
 
 ## Where it stands
 
 The real PoE2 Steam client (0.5.5e, patched with our login keys) logs in to our Auth with its Steam ticket and
-enters Clearfell Encampment, served by our Gateway. The player has a HUD and inventories, the area is drawn, and the
-player walks. The server's estimate of where the player is stops at the camp's walls.
+enters Clearfell Encampment, served by our Gateway. Characters are created on the client's create screen and chosen
+on its character screen; the player enters as the saved character (name, class model, level). The player has a HUD
+and inventories, the area is drawn, and the player walks. The server's estimate of where the player is stops at the
+camp's walls.
 
 | Part | State | Where |
 |---|---|---|
 | Login crypto (DH, DSA, Salsa20) | Works; ported unchanged from PoE1. The patched client accepts our handshake. | `ClientLayout.Poe2` in `LoginKeys.cs`; waves 1–3 |
-| Login messages | Mapped and tested: `0x04`, `0x05`, `0x0e`, `0x10`, `0x14`, `0x15`, `0x16`, `0x18` (`LoginDialect.Poe2`) | `LoginMessagesPoe2.cs`; waves 4–6 |
-| Auth for the PoE2 client | `Game_CLIENT=poe2`: every Steam ticket opens one local account with a default Witch; Play goes to Clearfell Encampment. PoE2 character creation is not mapped. | `LoginServerSession.cs`, `GameServer.Auth/Program.cs`; wave 15 |
+| Login messages | Mapped and tested: `0x04`, `0x05`, `0x0e`, `0x10`, `0x11`, `0x12`, `0x13`, `0x14`, `0x15`, `0x16`, `0x18`, `0x1b` (`LoginDialect.Poe2`) | `LoginMessagesPoe2.cs`; waves 4–6, 16 |
+| Auth for the PoE2 client | `Game_CLIENT=poe2`: every Steam ticket opens one local account (a default Witch on first use). Characters of PoE2's 12 classes are created in the Standard family of leagues and chosen with Play; Play goes to Clearfell Encampment. | `LoginServerSession.cs`, `Poe2Classes.cs`, `GameServer.Auth/Program.cs`; waves 15–16 |
 | Instance opening, encryption, area message | Done | `InstanceOpeningPoe2.cs`, `InstanceProtocolPoe2.cs`, `AreaInstancePoe2.cs`; waves 7–8 |
-| Player object, inventories, enter area | Done, but every player is the IntFour template (class, name and stats not used) | `PlayerObjectPoe2.cs`, `InstanceInventoriesPoe2.cs`; waves 9–10 |
+| Player object, inventories, enter area | Done. The player has the saved name, class (object type) and level; life, mana and stats are fixed | `PlayerObjectPoe2.cs`, `InstanceInventoriesPoe2.cs`; waves 9–10, 16 |
 | Lockstep frames (`0x2f5` / `0x2f4`) | Done; the world is drawn | wave 11 |
 | Movement (C→S `0x63`, S→C `0x64`) | Done, with a server-side walk estimate | `InstanceMovementPoe2.cs`, `DirectionWalk.cs`; wave 12 |
 | Gateway in PoE2 mode | `Game_CLIENT=poe2` | `Program.Poe2.cs`, `InstanceSessionPoe2.cs`; wave 13 |
 | Walkability | Clearfell Encampment only; the estimate stops at walls (median 2 cells off live) | `scripts/walkmaps/poe2_walkmap.py`, `AreaLayouts.LoadCells`; wave 14 |
 
-**Tests.** 519/519 pass:
+**Tests.** 560/560 pass:
 
 ```bash
 dotnet test tests/GameServer.Core.Tests -c Release
@@ -155,7 +157,10 @@ From the repo root, in separate terminals or background jobs. Logs go to `logs/`
    - Do not use the Steam launcher stub (`PathOfExile_x64Steam.exe`): it checks GGG's signature.
    - Without `SteamAppId` / `SteamGameId` the client quits before "Steam is loaded!".
    - The client logs in by itself with the Steam ticket. It may sit on the title screen for a few minutes first.
-   - With one character, it presses Play by itself and enters Clearfell Encampment.
+   - On launch it presses Play by itself on the preselected (last played) character.
+   - To get back to the character screen, use "Exit to Log In Screen": the client logs in again by itself.
+     "Exit to Character Selection" waits for a Gateway answer that is not mapped (C→S `0x173`).
+   - Create → league → class → name creates the character, plays its intro, then enters the game with it.
    - Walk with WASD (W sometimes sent nothing during testing) or by holding the mouse on the ground.
 5. **Optional, check the walk estimate.** Start the tracker before step 4.
    - `--follow` makes it wait for the client process.
@@ -225,17 +230,15 @@ This is the method used for waves 4–14, so the next wave does not start from z
 
 In rough order. Each is a wave of its own.
 
-1. **The character from the save.** The class, name, level and stats in the `0x2f7` player and the Player/Stats
-   components, instead of the IntFour template. Auth already sends the class, name and level in the ticket's
-   resolve answer; the Gateway does not use them yet.
-2. **The rest of the PoE2 login** (wave 15 left these):
-   - character creation: the PoE2 layout of C→S `0x12`, and PoE2's 12 classes in the saves (they store PoE1's 7);
-   - several characters: what Play's u32 pairs mean (the first u32 is taken as the index, unverified);
-   - C→S `0x10` and its probable answer S→C `0x16`;
-   - league entries in `0x1b` (sent empty);
+1. **The rest of the character** (wave 16 did the name, class and level):
+   - the class's real life, mana and attributes (the Gateway sends fixed pools and zero Stats);
+   - the `0x11` / `0x15` detail blob (31 records of `0x80` bytes, `0x1420e5c10`), so the character screen shows
+     the character's gear;
+   - the act and premade start states (CharacterStartStates rows 12 on);
    - optionally, the Gateway's fallback for unknown tickets (`ResolvePoe2Ticket`), once the harness is retired.
+2. **Exit to Character Selection.** Its C→S `0x173` waits for a Gateway answer.
 3. **Unmapped client messages.** C→S `0x1c` (every 100 ms) and `0x62`, and the ids the Gateway drops on entering:
-   `0xbc`, `0x2e8`, `0x13d`.
+   `0xbc`, `0x2e8`, `0x13d`, `0x14c`.
 4. **Walk estimate accuracy.**
    - Map the client's collision / slide code; slanted walls still put the estimate up to ~20 cells off.
    - Make server objects (NPCs, stash) block the walk.
@@ -265,4 +268,5 @@ In rough order. Each is a wave of its own.
 | 13 | Gateway serves the PoE2 client | `a8a2ccc` |
 | 14 | Walkability, walls-aware walk estimate | `fb4576c` |
 | — | This handoff and its tools | `29d65c5` |
-| 15 | Auth logs the PoE2 Steam client in | the commit after `29d65c5` |
+| 15 | Auth logs the PoE2 Steam client in | `6200d53` |
+| 16 | Character creation, several characters, the saved character in game | the commit after `6200d53` |

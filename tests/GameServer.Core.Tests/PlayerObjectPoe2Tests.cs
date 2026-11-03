@@ -35,6 +35,27 @@ public class PlayerObjectPoe2Tests
         byte[] blob = new PlayerObjectPoe2(GridX: 0, GridY: 0, Life: 1).Blob();
 
         blob[34] = 0;
+        blob[PlayerObjectPoe2.PlayerOffset + 4] = 0;   // the Witch's row, 1
         Assert.All(blob, b => Assert.Equal(0, b));
+    }
+
+    [Fact]
+    public void The_player_component_starts_with_the_name_the_class_row_and_the_experience()
+    {
+        byte[] blob = new PlayerObjectPoe2(GridX: 0, GridY: 0, Life: 1, Name: "Ilse", ClassRow: 9, Experience: 525).Blob();
+
+        int at = PlayerObjectPoe2.PlayerOffset;
+        Assert.Equal(4u, BinaryPrimitives.ReadUInt32LittleEndian(blob.AsSpan(at)));
+        Assert.Equal("Ilse", System.Text.Encoding.Unicode.GetString(blob, at + 4, 8));
+        Assert.Equal(9, blob[at + 12]);
+        Assert.Equal(525u, BinaryPrimitives.ReadUInt32LittleEndian(blob.AsSpan(at + 13)));
+        Assert.Equal(PlayerObjectPoe2.BlobLength + 8, blob.Length);
+    }
+
+    [Fact]
+    public void The_player_component_follows_animated()
+    {
+        // Positioned 17, Stats 13, Buffs 2, Life 125 and Animated 1 after the object flags and base data count.
+        Assert.Equal(2 + 17 + 13 + 2 + 125 + 1, PlayerObjectPoe2.PlayerOffset);
     }
 }
