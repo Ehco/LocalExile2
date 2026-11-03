@@ -388,6 +388,9 @@ public sealed record TwoWStringsBool(string A, string B, bool Flag) : ILoginMess
 
 public enum LoginDirection { ServerToClient, ClientToServer }
 
+/// <summary>Which client's message layouts to use: PoE1 3.29.3b, or the PoE2 Steam client (LoginMessagesPoe2.cs).</summary>
+public enum LoginDialect { Poe1, Poe2 }
+
 /// <summary>Id → layout tables for both directions and a framing-free stream decoder.</summary>
 public static class LoginCodec
 {
@@ -423,19 +426,30 @@ public static class LoginCodec
         [0x3f] = WStringMessage.Read, [0x40] = WStringMessage.Read, [0x42] = U8Message.Read, [0x46] = U32Message.Read,
     };
 
-    public static bool IsKnown(LoginDirection dir, ushort id) => Table(dir).ContainsKey(id);
+    // PoE2 (PathOfExileSteam.exe, factory 0x14214fbe0): PoE1's tables with the layouts that changed (LoginMessagesPoe2.cs).
+    // The factory also has S→C 0x16, whose layout is not mapped yet. C→S 0x18 (character list request, sender
+    // 0x140f03f10) gained a u32: the U32_10 of the 0x04 that logged in, read back from the record at login+0xef0.
+    private static readonly Dictionary<ushort, Reader> Poe2ServerToClient = new(ServerToClient) { [0x04] = LoginResultPoe2.Read };
+    private static readonly Dictionary<ushort, Reader> Poe2ClientToServer = new(ClientToServer)
+    {
+        [0x05] = TokenLoginPoe2.Read, [0x18] = U32Message.Read,
+    };
+
+    public static bool IsKnown(LoginDirection dir, ushort id, LoginDialect dialect = LoginDialect.Poe1) =>
+        Table(dir, dialect).ContainsKey(id);
 
     /// <summary>
     /// Decodes one message from the start of <paramref name="buf"/>. Returns false if more bytes are needed. An unknown
     /// id throws: without a length prefix the rest of the stream cannot be resynchronized.
     /// </summary>
-    public static bool TryDecode(LoginDirection dir, ReadOnlySpan<byte> buf, out ILoginMessage? message, out int consumed)
+    public static bool TryDecode(LoginDirection dir, ReadOnlySpan<byte> buf, out ILoginMessage? message, out int consumed,
+        LoginDialect dialect = LoginDialect.Poe1)
     {
         message = null; consumed = 0;
         var r = new LoginReader(buf);
         ushort id = r.U16();
         if (r.Short) return false;
-        if (!Table(dir).TryGetValue(id, out var read))
+        if (!Table(dir, dialect).TryGetValue(id, out var read))
             throw new InvalidDataException($"unknown {dir} login message 0x{id:x4}");
         var m = read(id, ref r);
         if (r.Short) return false;
@@ -443,5 +457,11 @@ public static class LoginCodec
         return true;
     }
 
-    private static Dictionary<ushort, Reader> Table(LoginDirection dir) => dir == LoginDirection.ServerToClient ? ServerToClient : ClientToServer;
+    private static Dictionary<ushort, Reader> Table(LoginDirection dir, LoginDialect dialect) => (dir, dialect) switch
+    {
+        (LoginDirection.ServerToClient, LoginDialect.Poe2) => Poe2ServerToClient,
+        (LoginDirection.ClientToServer, LoginDialect.Poe2) => Poe2ClientToServer,
+        (LoginDirection.ServerToClient, _) => ServerToClient,
+        _ => ClientToServer,
+    };
 }

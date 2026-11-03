@@ -13,12 +13,12 @@ real client as the renderer — the approach proven by
 | LocalExile baseline clone | done (depth 1, upstream main) |
 | .NET 10 SDK | installed via winget |
 | `dotnet build GameServer.slnx -c Release` | **passes** |
-| `dotnet test tests/GameServer.Core.Tests` | **415/415 pass** |
+| `dotnet test tests/GameServer.Core.Tests` | **426/426 pass** |
 | PoE2 client recon (login crypto) | **done — see findings** |
 | PoE2 client recon (DH groups) | **done** — groups unchanged (finding 5) |
 | PoE2 client recon (login key blobs) | **done** — all three mapped (findings 4, 6, 7) |
 | Login handshake vs patched real client | **done** — client accepts our signed `0x0002`, C→S decrypts (wave 3) |
-| PoE2 login message set | started — `0x05` token login moved its blob first (wave 3) |
+| PoE2 login message set | in progress — `0x04`/`0x05`/`0x18` mapped, client reaches character select (wave 4) |
 | PoE2 gateway/instance protocol | not started |
 
 ## Recon findings (2026-10-30, client build of 2026-10-08 install)
@@ -200,19 +200,53 @@ Result (client build `d46f4c27…`, `poe2_production/tags/0.5.5e`, revision 3264
   10 s, and every one decrypts to `0001` (the field-less `0x01` that PoE1
   already lists, probably a keepalive). A wrong key or IV split would give
   random bytes.
-- **First message is `0x05` (token login, the Steam path), with a PoE2
-  layout change.** 229 bytes: `0005 | 009F | <159-byte token> | 66 bytes`.
-  PoE1's `0x05` (`TokenLogin`, [re/009](Agents/docs/re/009-login-messages.md))
-  is `u8 realm|0x40, bytes[32] id B, bytes[32] id A, u8, blob token`, i.e. the
-  blob comes last; in PoE2 the u16-length blob comes **first**, and its length
-  matches the rest of the message exactly. The trailing 66 bytes are the same
-  size as PoE1's fixed fields and start with `0x57` (0x40 bit set, like
-  `realm|0x40`), so they are probably the same fields in the old order — not
-  yet checked against the PoE2 writer.
+- **First message is `0x05` (token login, the Steam path)**, 229 bytes with a
+  159-byte token. Wave 4 maps its PoE2 layout from the writer.
 - No credentials are needed: on Steam the client logs in with the ticket by
-  itself. Next deliverable: the client's reader for S→C `0x04`
-  (`LoginResult`) on PoE2, so the server can answer the `0x05`, and a
-  `TokenLogin` reader keyed by client layout.
+  itself.
 
 Don't commit the harness log: the token is a live Steam session ticket and
 ids A/B identify the machine.
+
+## Wave 4 — login accepted, client reaches character select (2026-11-03)
+
+Static mapping of the PoE2 login message classes (`PathOfExileSteam.exe`,
+same build), then a live run that answers the token login.
+
+- **S→C factory `0x14214fbe0`** (ids 1–0x47) has the same id set as PoE1's
+  `0x14219c350`, plus `0x16` (class `0x143509e58`, layout not mapped). The
+  dispatch is the switch at `0x1420e82b0` (on `msg+8`, ids 2–0x47).
+- **S→C `0x04` gained a leading u32** (vtable `0x143509ed8`, read
+  `0x14214dbe0`): `u32, u16 result, wstr, bytes[32], u8 flags0, u8 flags1,
+  blob`. Dispatch case 4 tests the u16 at `+0x14` (0 = state 3, `+0xee0`) and on
+  success appends a 0x78-byte record to the vector at `login+0xef0` holding
+  the u32, the blob and the flag bits (flags0 bits 0–7, flags1 bits 0–1).
+- **C→S `0x05` keeps PoE1's fields but splits the token** (vtable
+  `0x143506370`, write `0x1420e3670`, sender `0x1420e7f80`): `u16 token
+  length, u8 realm|0x40, bytes[32] id B, bytes[32] id A, u8, token bytes`.
+  The capture parses cleanly: realm byte `0x40` (realm 0), last u8 0,
+  159-byte token. (Wave 3's guess of "token first" was wrong: only the length
+  comes first.)
+- **C→S `0x18` (character list request) gained a u32** (sender
+  `0x140f03f10`, u32 class `0x143506270`): it echoes the `0x04` u32 from the
+  record at `login+0xef0`, and is sent only in state 3 with that record
+  present.
+- Unchanged and checked: `0x06`/`0x07` (writer `0x1420e3240`), `0x03` still
+  sends version 2 (sender `0x1420e7c70`), wstr reader `0x141cfb540`, blob
+  reader `0x14087cd70`, and `0x1b`'s outer shape (`raw64, vec32, u8`, so an
+  empty league list works).
+
+Code: `LoginDialect.Poe2` in `LoginCodec`/`LoginMessageStream` swaps in
+`LoginResultPoe2`, `TokenLoginPoe2` and the u32 `0x18`
+(`LoginMessagesPoe2.cs`, tests in `LoginMessagePoe2Tests.cs`).
+
+Live run: the harness decoded the client's `0x05` with the PoE2 dialect and
+answered `0x04` (u32 0, result 0, flags0 `0x20`) plus an empty `0x1b`. The
+client accepted both, left the login screen for the character-select scene
+(no UI yet) and sent `0018 00000000`, then kept up the 10 s keepalive while it
+waited for the character list.
+
+Next: map PoE2's S→C `0x15` (character list, read `0x14214e210`; its entry
+struct likely grew for the 12 classes), then wire `TokenLoginPoe2` into
+`LoginServerSession`/`GameServer.Auth` (which local account a Steam token
+maps to is an open design choice).

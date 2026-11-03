@@ -8,7 +8,7 @@ namespace GameServer.Core.Protocol.Login;
 /// id or malformed field the stream cannot be resynchronized (no length prefix): <see cref="Desynced"/> is set and
 /// later bytes collect in <see cref="Undecoded"/> without being parsed.
 /// </summary>
-public sealed class LoginMessageStream(LoginDirection incoming)
+public sealed class LoginMessageStream(LoginDirection incoming, LoginDialect dialect = LoginDialect.Poe1)
 {
     private readonly List<byte> _pending = [];
 
@@ -27,7 +27,7 @@ public sealed class LoginMessageStream(LoginDirection incoming)
         int pos = 0;
         try
         {
-            while (LoginCodec.TryDecode(incoming, buf.AsSpan(pos), out var m, out int used))
+            while (LoginCodec.TryDecode(incoming, buf.AsSpan(pos), out var m, out int used, dialect))
             {
                 result.Add(m!);
                 pos += used;
