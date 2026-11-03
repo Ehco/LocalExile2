@@ -4,18 +4,19 @@ Read this first if you are picking up the PoE2 work. It covers where things stan
 from nothing, how to run a live test, and what to do next. The wave-by-wave findings (addresses, message layouts,
 live results) are in [PORTING-POE2.md](PORTING-POE2.md). This file points into it and does not repeat it.
 
-Last updated 2026-11-04, after wave 14.
+Last updated 2026-11-04, after wave 15.
 
 ## Where it stands
 
-The real PoE2 Steam client (0.5.5e, patched with our login keys) logs in against a local stand-in and enters
-Clearfell Encampment, served by our Gateway. The player has a HUD and inventories, the area is drawn, and the
+The real PoE2 Steam client (0.5.5e, patched with our login keys) logs in to our Auth with its Steam ticket and
+enters Clearfell Encampment, served by our Gateway. The player has a HUD and inventories, the area is drawn, and the
 player walks. The server's estimate of where the player is stops at the camp's walls.
 
 | Part | State | Where |
 |---|---|---|
 | Login crypto (DH, DSA, Salsa20) | Works; ported unchanged from PoE1. The patched client accepts our handshake. | `ClientLayout.Poe2` in `LoginKeys.cs`; waves 1–3 |
-| Login messages | Mapped and tested: `0x04`, `0x05`, `0x0e`, `0x10`, `0x14`, `0x15`, `0x16`, `0x18` (`LoginDialect.Poe2`). **Not wired into Auth.** A test harness answers them for now. | `LoginMessagesPoe2.cs`; waves 4–6 |
+| Login messages | Mapped and tested: `0x04`, `0x05`, `0x0e`, `0x10`, `0x14`, `0x15`, `0x16`, `0x18` (`LoginDialect.Poe2`) | `LoginMessagesPoe2.cs`; waves 4–6 |
+| Auth for the PoE2 client | `Game_CLIENT=poe2`: every Steam ticket opens one local account with a default Witch; Play goes to Clearfell Encampment. PoE2 character creation is not mapped. | `LoginServerSession.cs`, `GameServer.Auth/Program.cs`; wave 15 |
 | Instance opening, encryption, area message | Done | `InstanceOpeningPoe2.cs`, `InstanceProtocolPoe2.cs`, `AreaInstancePoe2.cs`; waves 7–8 |
 | Player object, inventories, enter area | Done, but every player is the IntFour template (class, name and stats not used) | `PlayerObjectPoe2.cs`, `InstanceInventoriesPoe2.cs`; waves 9–10 |
 | Lockstep frames (`0x2f5` / `0x2f4`) | Done; the world is drawn | wave 11 |
@@ -23,14 +24,14 @@ player walks. The server's estimate of where the player is stops at the camp's w
 | Gateway in PoE2 mode | `Game_CLIENT=poe2` | `Program.Poe2.cs`, `InstanceSessionPoe2.cs`; wave 13 |
 | Walkability | Clearfell Encampment only; the estimate stops at walls (median 2 cells off live) | `scripts/walkmaps/poe2_walkmap.py`, `AreaLayouts.LoadCells`; wave 14 |
 
-**Tests.** 506/506 pass:
+**Tests.** 519/519 pass:
 
 ```bash
 dotnet test tests/GameServer.Core.Tests -c Release
 ```
 
 **Git.**
-- Branch `poe2-client-static-private`: 13 wave commits plus the handoff commit, on top of `origin/main`
+- Branch `poe2-client-static-private`: the wave commits and the handoff commit, on top of `origin/main`
   (`a3da89a`, the upstream wave 1 checkpoint). The handoff commit holds this file and the tools marked "added with
   this handoff" below.
 - **Nothing is pushed.** Upstream is https://github.com/Ehco/LocalExile2. It also has a `poe2-port` branch, still at
@@ -43,6 +44,9 @@ dotnet test tests/GameServer.Core.Tests -c Release
     `LoginMessages.cs`, and the dialect parameter of `LoginMessageStream.cs`;
   - `src/GameServer.Core/Protocol/Instance/*Poe2.cs`;
   - `src/GameServer.Core/World/DirectionWalk.cs`.
+- **Auth:** `src/GameServer.Core/Protocol/Login/LoginServerSession.cs` (answers both dialects; `SteamAccount`,
+  `Poe2ClassRow`), `AccountService.LoginTrusted`, and in `src/GameServer.Auth/` the `Poe2Login` settings in
+  `Program.cs` and the fixed start area of `InstanceDirectory.AssignStart`.
 - **Server:** `src/GameServer.Gateway/Program.Poe2.cs` (branches off before the PoE1 startup) and
   `src/GameServer.Gateway/AreaLayouts.cs` (`LoadCells`, walk maps).
 - **Tests:** `tests/GameServer.Core.Tests/*Poe2Tests.cs`, `DirectionWalkTests.cs`.
@@ -116,13 +120,8 @@ Once per machine. Everything generated here lives in `data/`, which git ignores.
 From the repo root, in separate terminals or background jobs. Logs go to `logs/`, which git ignores
 (`mkdir -p logs` once).
 
-**Auth is not needed, and should not run.**
-- The PoE2 Gateway asks Auth to resolve the ticket. With no Auth running, it falls back to Clearfell Encampment.
-- A PoE1 Auth that knows the harness's fixed ticket 1 would resolve it to a PoE1 area instead.
-
-1. **Build** before the first run and after any change.
-   - Stop the Gateway first, or MSB3027 reports a locked DLL.
-   - The harness is not in the solution: `dotnet run` builds it (Debug) each time it starts.
+1. **Build** before the first run and after any change. Stop Auth and the Gateway first, or MSB3027 reports a
+   locked DLL.
    ```bash
    dotnet build GameServer.slnx -c Release
    ```
@@ -130,14 +129,21 @@ From the repo root, in separate terminals or background jobs. Logs go to `logs/`
    ```bash
    Game_CLIENT=poe2 dotnet run --project src/GameServer.Gateway -c Release --no-build > logs/gateway.log 2>&1
    ```
-   - Keep the default port. The harness hard-codes 6112 in the Play answer it sends the client.
-3. **Login harness** (port 21265, which only logs in):
+3. **Auth** (port 21265, the port the redirected client dials):
    ```bash
-   INSTANCE_SECRET=data/instance-secret.bin dotnet run --project scripts/dev/poe2-login-harness -- data/login-keys.json 21265 logs/harness.log
+   Game_CLIENT=poe2 Game_LOGIN_PORT=21265 dotnet run --project src/GameServer.Auth -c Release --no-build > logs/auth.log 2>&1
    ```
-   - Keep `INSTANCE_SECRET` set: it makes the harness use the Gateway's keys and leave port 6112 to it. Without
-     it the harness serves its own scripted instance on 6112 (the wave 9–12 experiments) and clashes with the
-     Gateway.
+   - Every Steam login opens the account `Game_POE2_ACCOUNT` (default `steam`). It is created on first use, with
+     the character `Game_POE2_CHARACTER` (default `Exile`, a Witch) when it has none.
+   - Accounts and characters go in the save database (`data/saves.db`), shared with a PoE1 setup on the same
+     machine: a character name must be unique across both.
+   - Auth and the Gateway share `data/instance-secret.bin`, and the Gateway resolves each ticket through Auth's
+     control port (20495).
+   - **Before wave 15** the login was answered by `scripts/dev/poe2-login-harness` instead. It is kept for
+     experiments: run it instead of Auth with
+     `INSTANCE_SECRET=data/instance-secret.bin dotnet run --project scripts/dev/poe2-login-harness -- data/login-keys.json 21265 logs/harness.log`.
+     Without `INSTANCE_SECRET` it serves its own scripted instance on 6112 and clashes with the Gateway. It
+     hard-codes port 6112 and ticket 1, and is not in the solution (`dotnet run` builds it).
 4. **Client.** Copy the patched exe into the install folder under the name the Frida scripts expect, and launch it
    directly (PowerShell):
    ```powershell
@@ -148,7 +154,8 @@ From the repo root, in separate terminals or background jobs. Logs go to `logs/`
    ```
    - Do not use the Steam launcher stub (`PathOfExile_x64Steam.exe`): it checks GGG's signature.
    - Without `SteamAppId` / `SteamGameId` the client quits before "Steam is loaded!".
-   - The client logs in by itself with the Steam ticket, then enters Clearfell Encampment.
+   - The client logs in by itself with the Steam ticket. It may sit on the title screen for a few minutes first.
+   - With one character, it presses Play by itself and enters Clearfell Encampment.
    - Walk with WASD (W sometimes sent nothing during testing) or by holding the mouse on the ground.
 5. **Optional, check the walk estimate.** Start the tracker before step 4.
    - `--follow` makes it wait for the client process.
@@ -167,10 +174,11 @@ From the repo root, in separate terminals or background jobs. Logs go to `logs/`
 **After each test:**
 - close the client;
 - delete `<install>\PathOfExileSteam_le2.exe`;
-- stop the Gateway and the harness;
-- delete `logs/harness.log` and `logs/track.log`.
+- stop Auth and the Gateway (or the harness);
+- delete `logs/track.log`, and `logs/harness.log` if you used the harness.
 
 **Never commit or share the harness log.** Its raw dumps can carry the live Steam session ticket and machine ids.
+Auth redacts the ticket and the machine ids in its own log.
 
 ## Rules and pitfalls
 
@@ -217,13 +225,15 @@ This is the method used for waves 4–14, so the next wave does not start from z
 
 In rough order. Each is a wave of its own.
 
-1. **PoE2 login in Auth.**
-   - Wire `LoginDialect.Poe2` into `LoginServerSession`.
-   - Map a Steam token to a local account. There is no password on Steam: the client sends only its ticket.
-   - Serve the character list from the saves.
-   - Then the harness and the Gateway's fallback ticket (`ResolvePoe2Ticket`) can go.
-2. **The character from the save.** The class, name, level and stats in the `0x2f7` player and the Player/Stats
-   components, instead of the IntFour template.
+1. **The character from the save.** The class, name, level and stats in the `0x2f7` player and the Player/Stats
+   components, instead of the IntFour template. Auth already sends the class, name and level in the ticket's
+   resolve answer; the Gateway does not use them yet.
+2. **The rest of the PoE2 login** (wave 15 left these):
+   - character creation: the PoE2 layout of C→S `0x12`, and PoE2's 12 classes in the saves (they store PoE1's 7);
+   - several characters: what Play's u32 pairs mean (the first u32 is taken as the index, unverified);
+   - C→S `0x10` and its probable answer S→C `0x16`;
+   - league entries in `0x1b` (sent empty);
+   - optionally, the Gateway's fallback for unknown tickets (`ResolvePoe2Ticket`), once the harness is retired.
 3. **Unmapped client messages.** C→S `0x1c` (every 100 ms) and `0x62`, and the ids the Gateway drops on entering:
    `0xbc`, `0x2e8`, `0x13d`.
 4. **Walk estimate accuracy.**
@@ -254,3 +264,5 @@ In rough order. Each is a wave of its own.
 | 12 | Direction movement `0x63` / `0x64` | `efb933a` |
 | 13 | Gateway serves the PoE2 client | `a8a2ccc` |
 | 14 | Walkability, walls-aware walk estimate | `fb4576c` |
+| — | This handoff and its tools | `29d65c5` |
+| 15 | Auth logs the PoE2 Steam client in | the commit after `29d65c5` |

@@ -42,7 +42,13 @@ sealed class InstanceDirectory(InstanceRegistry registry, AccountService? accoun
             await _lock.WaitAsync();
             try
             {
-                var logged = message is LoginResult result ? result with { Digest = [], Data = [] } : message;
+                var logged = message switch
+                {
+                    LoginResult result => result with { Digest = [], Data = [] },
+                    LoginResultPoe2 result => result with { Digest = [], Data = [] },
+                    InstanceInfo info => info with { Key64 = [] },   // the instance connection's key
+                    _ => message,
+                };
                 Console.WriteLine($"[auth] {peer} => {LoginMessageFormat.Describe(logged)}");
                 byte[] wire = LoginMessage.Encode(message);
                 ciphers.Send.Process(wire);
@@ -52,13 +58,14 @@ sealed class InstanceDirectory(InstanceRegistry registry, AccountService? accoun
         }
     }
 
-    /// <summary>Play (login 0x0e): enter the chosen home, or last town if none; record the ticket and login link.</summary>
-    public (ushort Area, uint Ticket) AssignStart(LoginServerSession session, LoginLink link)
+    /// <summary>Play (login 0x0e): enter <paramref name="area"/> if given (the PoE2 client: Clearfell Encampment), else the
+    /// chosen home, or last town if none; record the ticket and login link.</summary>
+    public (ushort Area, uint Ticket) AssignStart(LoginServerSession session, LoginLink link, ushort? area = null)
     {
         string character = session.CharacterName ?? "?";
         _links[character] = link;
         // Explicitly selected homes take precedence; characters without a choice retain town progression.
-        var inst = registry.Enter(loginHideout?.Invoke(character) ?? WorldAreaTowns.LoginArea(session.CharacterLastTown, _towns),
+        var inst = registry.Enter(area ?? loginHideout?.Invoke(character) ?? WorldAreaTowns.LoginArea(session.CharacterLastTown, _towns),
             character, session.CharacterLeague?.Name, session.CharacterLeague?.Ssf ?? false, session.CharacterId?.ToString("N"));
         return (inst.AreaHash, NewTicket(session, character, inst));
     }

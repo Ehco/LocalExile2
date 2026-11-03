@@ -14,13 +14,13 @@ real client as the renderer — the approach proven by
 | LocalExile baseline clone | done (depth 1, upstream main) |
 | .NET 10 SDK | installed via winget |
 | `dotnet build GameServer.slnx -c Release` | **passes** |
-| `dotnet test tests/GameServer.Core.Tests` | **506/506 pass** |
+| `dotnet test tests/GameServer.Core.Tests` | **519/519 pass** |
 | PoE2 client recon (login crypto) | **done — see findings** |
 | PoE2 client recon (DH groups) | **done** — groups unchanged (finding 5) |
 | PoE2 client recon (login key blobs) | **done** — all three mapped (findings 4, 6, 7) |
 | Login handshake vs patched real client | **done** — client accepts our signed `0x0002`, C→S decrypts (wave 3) |
 | PoE2 login message set | in progress — `0x04`/`0x05`/`0x0e`/`0x10`/`0x14`/`0x15`/`0x16`/`0x18` mapped; Play reaches the instance server (wave 6) |
-| PoE2 gateway/instance protocol | in progress — the client enters Clearfell Encampment with a player entity, inventories and the in-game HUD, the area and the player are drawn once server frames run (wave 11), and the player walks when the server echoes its direction moves (wave 12); the Gateway serves all of it with `Game_CLIENT=poe2` (wave 13), and its walk estimate stops at the camp's walls (wave 14) |
+| PoE2 gateway/instance protocol | in progress — the client enters Clearfell Encampment with a player entity, inventories and the in-game HUD, the area and the player are drawn once server frames run (wave 11), and the player walks when the server echoes its direction moves (wave 12); the Gateway serves all of it with `Game_CLIENT=poe2` (wave 13), and its walk estimate stops at the camp's walls (wave 14); Auth logs the Steam client in and sends it there (wave 15) |
 
 ## Recon findings (2026-10-30, client build of 2026-10-08 install)
 
@@ -828,3 +828,57 @@ Limits:
   the client may walk around them.
 - Only Clearfell Encampment has an id for its walk map until Auth serves
   PoE2 areas.
+
+## Wave 15 — Auth logs the PoE2 client in (2026-11-04)
+
+`Game_CLIENT=poe2` now also runs Auth for the PoE2 Steam client, so live tests
+no longer need the login harness. Auth listens on `Game_LOGIN_PORT=21265`
+(the port the redirected client dials).
+
+- **Login dialect.** The connection decodes with `LoginDialect.Poe2`.
+  `LoginServerSession` answers the PoE2 messages next to the PoE1 ones (their
+  types differ: `TokenLoginPoe2`, `U32Message 0x18`, `PlayPoe2`).
+- **Steam login.** The client sends only its Steam ticket, which cannot be
+  checked offline. Every ticket opens one local account, `Game_POE2_ACCOUNT`
+  (default `steam`), created on first use with a random password
+  (`AccountService.LoginTrusted`). The answer is the PoE2 `0x04` (record id 0,
+  result 0, verified flag) and an empty `0x1b`: only the outer shape of `0x1b`
+  is checked on PoE2, not its entries.
+- **Default character.** PoE2's character creation (`0x12`) is not mapped, so
+  an account with no character gets one: `Game_POE2_CHARACTER` (default
+  `Exile`), a level 1 Witch. If the name is taken by another account, Auth logs
+  it and the character screen stays empty.
+- **Character list `0x15`.** Echoes the `0x18` record id. The class byte is
+  the row of PoE2's `Characters.datc64` (0.5.5e, 12 rows): Marauder 0, Witch 1
+  (`IntFour`), Ranger 2, Duelist 3, Shadow 4, Templar 5, then Warrior,
+  Sorceress, Huntress, Mercenary, Monk, Druid (6–11). Row 3 showed "Duelist"
+  in wave 5. PoE2 has no Scion; `Poe2ClassRow` gives it the Witch.
+- **Play `0x0e`.** The first u32 of the first pair is taken as the
+  character's index (a guess: only one character was tested). Auth's instance
+  registry puts the character in Clearfell Encampment (`0x3f70`, seed 1) and
+  issues the ticket, so the Gateway resolves it through Auth instead of
+  falling back.
+- `0x10` (character details) stays unanswered, as before.
+- The token and machine ids are redacted in Auth's log. Before login, bytes
+  Auth cannot decode are counted, not dumped, since they may hold the ticket.
+- Auth creates the Steam account at startup and stops if its name is invalid
+  (3–32 letters, digits, `_` or `-`). It warns when `Game_BIND` is not a
+  loopback address: anyone reaching the port then logs in without a password.
+- Two logins at once create the default character once
+  (`AccountService.EnsureCharacter`).
+
+**Live test (2026-11-04).** Auth (`Game_CLIENT=poe2 Game_LOGIN_PORT=21265`)
+and the Gateway, no harness:
+- the client logged in by itself;
+- it listed "Exile", level 1, and pressed Play by itself (the only
+  character is preselected);
+- Auth issued the ticket for instance 1 of `0x3f70`, and the Gateway resolved
+  it ("not resolved" never logged);
+- the client entered Clearfell Encampment and the player walked (150 `0x64`
+  echoes).
+
+Limits:
+- One account for every Steam ticket: a server for one player.
+- The character still plays as the IntFour template, whatever its class,
+  name or level.
+- Every PoE2 login starts in Clearfell Encampment.

@@ -105,6 +105,35 @@ public sealed class AccountService(IAccountStore store, TimeProvider? clock = nu
         return Result<Session>.Success(NewSession(acc));
     }
 
+    /// <summary>Login without a password into the account the server is configured to trust, created on first use with a
+    /// random password: the PoE2 Steam client sends only a Steam ticket, which cannot be checked offline.</summary>
+    public Result<Session> LoginTrusted(string name)
+    {
+        lock (_gate)
+        {
+            var acc = store.FindAccount(name);
+            if (acc is null)
+            {
+                var created = Register(name, Convert.ToBase64String(RandomNumberGenerator.GetBytes(24)));
+                if (!created.Ok) return Result<Session>.Fail(created.Error);
+                acc = created.Value!;
+            }
+            return Result<Session>.Success(NewSession(acc));
+        }
+    }
+
+    /// <summary>Creates <paramref name="name"/> for an account that has no character; Success(null) when it has one. The
+    /// check and the creation are one step, so two logins at once create it once.</summary>
+    public Result<Character?> EnsureCharacter(Guid accountId, string name, CharacterClass cls)
+    {
+        lock (_gate)
+        {
+            if (store.CharactersOf(accountId).Count > 0) return Result<Character?>.Success(null);
+            var created = CreateCharacter(accountId, name, cls);
+            return created.Ok ? Result<Character?>.Success(created.Value) : Result<Character?>.Fail(created.Error);
+        }
+    }
+
     private Session NewSession(Account acc)
     {
         var now = _clock.GetUtcNow();
