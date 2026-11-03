@@ -62,8 +62,9 @@ public readonly record struct U16CompactPair(ushort Key, int Value);
 /// S→C 0x15 on PoE2 (vtable 0x143509f98, write 0x14214df90, read 0x14214e210): the character list. U32_70 must equal the
 /// U32_10 of the 0x04 that logged in (dispatch 0x1420e86b4 looks the login record up by it and drops the list
 /// otherwise). Entries and B28/B29 go into that record, as in PoE1 (selected index, character slots). When B28 indexes
-/// an entry, Data is parsed into 31 records of 0x80 bytes (PoE1: 17) and, with U16_74, U16_76, Pairs, U32_68 and
-/// U32_6c (looked up in a hash map; a missing key gives an empty result), goes to the listeners at login+0xd08.
+/// an entry, Data (<see cref="CharacterPreviewPoe2"/>) is parsed into 31 records of 0x80 bytes (PoE1: 17) and, with
+/// U16_74, U16_76, Pairs, U32_68 and U32_6c (looked up in a hash map; a missing key gives an empty result), goes to the
+/// listeners at login+0xd08.
 /// </summary>
 public sealed record CharacterListPoe2(uint U32_70, IReadOnlyList<CharacterEntryPoe2> Entries, byte B28, byte B29,
     ushort U16_74, ushort U16_76, byte[] Data, IReadOnlyList<U16CompactPair> Pairs, uint U32_68, uint U32_6c) : ILoginMessage

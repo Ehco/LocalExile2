@@ -62,6 +62,9 @@ public sealed class LoginServerSession(AccountService accounts)
     /// <summary>The character the Steam account gets when it has none, so the first login can press Play at once.</summary>
     public string SteamCharacter { get; init; } = "Exile";
 
+    /// <summary>What a PoE2 character's screen shows it wearing (<see cref="CharacterPreviewPoe2"/>); null shows none.</summary>
+    public Func<Character, IReadOnlyList<VisibleItem>>? Poe2Preview { get; init; }
+
     /// <summary>Called with what went wrong that the client cannot be told (GameServer.Auth: logs it).</summary>
     public Action<string>? Notice { get; init; }
 
@@ -105,20 +108,29 @@ public sealed class LoginServerSession(AccountService accounts)
     }
 
     /// <summary>The PoE2 0x15 for login record <paramref name="recordId"/>. The class byte is the PoE2 Characters.datc64
-    /// row (<see cref="Poe2ClassRow"/>); the trailing blob and pairs stay empty, as in the live tests.</summary>
-    private CharacterListPoe2 CharacterListPoe2(uint recordId) => new(recordId,
-        Session is null ? [] : [.. accounts.Characters(Session.AccountId).Select(c => new CharacterEntryPoe2(c.Name, c.League,
-            0, 0, (byte)Math.Clamp(c.Level, 0, 255), 0, Poe2ClassRow(c.Class), 0, 0, 0, 0, 0, 0))],
-        LastPlayedIndex(), (byte)Math.Clamp(accounts.MaxCharacters, 0, 255), 0, 0, [], [], 0, 0);
+    /// row (<see cref="Poe2ClassRow"/>); the blob is the selected character's preview, the pairs stay empty.</summary>
+    private CharacterListPoe2 CharacterListPoe2(uint recordId)
+    {
+        var characters = Session is null ? [] : accounts.Characters(Session.AccountId);
+        byte selected = LastPlayedIndex();
+        return new(recordId,
+            [.. characters.Select(c => new CharacterEntryPoe2(c.Name, c.League,
+                0, 0, (byte)Math.Clamp(c.Level, 0, 255), 0, Poe2ClassRow(c.Class), 0, 0, 0, 0, 0, 0))],
+            selected, (byte)Math.Clamp(accounts.MaxCharacters, 0, 255), 0, 0,
+            selected < characters.Count ? Preview(characters[selected]) : [], [], 0, 0);
+    }
 
-    /// <summary>The PoE2 0x11 for a character the screen selects: empty details (the appearance blob is unmapped), as
-    /// 0x15 sends for its B28. The screen caches the entry and stops asking. Nothing for another record or a missing
-    /// index, which the client would drop.</summary>
+    /// <summary>The PoE2 0x11 for a character the screen selects: its preview, as 0x15 sends for its B28. The screen
+    /// caches the entry and stops asking. Nothing for another record or a missing index, which the client would drop.</summary>
     private ILoginMessage[] CharacterDetail(CharacterDetailRequestPoe2 m)
     {
-        if (Session is null || m.RecordId != _poe2RecordId || m.Index >= accounts.Characters(Session.AccountId).Count) return [];
-        return [new CharacterDetailPoe2(m.RecordId, m.Index, 0, 0, [], [], 0, 0)];
+        if (Session is null || m.RecordId != _poe2RecordId) return [];
+        var characters = accounts.Characters(Session.AccountId);
+        if (m.Index >= characters.Count) return [];
+        return [new CharacterDetailPoe2(m.RecordId, m.Index, 0, 0, Preview(characters[m.Index]), [], 0, 0)];
     }
+
+    private byte[] Preview(Character c) => Poe2Preview is null ? [] : CharacterPreviewPoe2.Blob(Poe2Preview(c));
 
     /// <summary>The PoE2 Characters.datc64 row of a class (<see cref="Poe2Classes"/>). Row 3 showed "Duelist" live
     /// (2026-11-03). PoE2 has no Scion: it gets the Witch.</summary>

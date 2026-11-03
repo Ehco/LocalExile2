@@ -1,4 +1,5 @@
 using GameServer.Core.Accounts;
+using GameServer.Core.Protocol.Instance;
 using GameServer.Core.Protocol.Login;
 using GameServer.Storage;
 
@@ -189,6 +190,24 @@ public class LoginServerSessionPoe2Tests
         Assert.Equal(0, detail.Index);
         Assert.Empty(detail.Data);
         Assert.Empty(detail.Pairs);
+    }
+
+    [Fact]
+    public void The_list_and_the_detail_carry_the_characters_preview()
+    {
+        var wand = new VisibleItem(CharacterPreviewPoe2.Weapon1, 0x8a43, Stance: 2, Type: 9);
+        var session = new LoginServerSession(new AccountService(new JsonAccountStore()))
+        {
+            SteamAccount = "steam", Poe2Preview = c => c.Class == CharacterClass.Witch ? [wand] : [],
+        };
+        RoundTrip(session, SteamLogin);
+
+        var list = Assert.IsType<CharacterListPoe2>(Assert.Single(RoundTrip(session, new U32Message(0x18, 7))));
+        var detail = Assert.IsType<CharacterDetailPoe2>(Assert.Single(RoundTrip(session, new CharacterDetailRequestPoe2(7, 0))));
+
+        byte[] expected = CharacterPreviewPoe2.Blob([wand]);
+        Assert.Equal(expected, list.Data);   // the default character is a Witch, selected as the only one
+        Assert.Equal(expected, detail.Data);
     }
 
     [Theory]

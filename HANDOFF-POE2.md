@@ -4,7 +4,7 @@ Read this first if you are picking up the PoE2 work. It covers where things stan
 from nothing, how to run a live test, and what to do next. The wave-by-wave findings (addresses, message layouts,
 live results) are in [PORTING-POE2.md](PORTING-POE2.md). This file points into it and does not repeat it.
 
-Last updated 2026-11-04, after wave 17.
+Last updated 2026-11-04, after wave 18.
 
 ## Where it stands
 
@@ -26,7 +26,7 @@ camp's walls.
 | Gateway in PoE2 mode | `Game_CLIENT=poe2` | `Program.Poe2.cs`, `InstanceSessionPoe2.cs`; wave 13 |
 | Walkability | Clearfell Encampment only; the estimate stops at walls (median 2 cells off live) | `scripts/walkmaps/poe2_walkmap.py`, `AreaLayouts.LoadCells`; wave 14 |
 
-**Tests.** 572/572 pass:
+**Tests.** 580/580 pass:
 
 ```bash
 dotnet test tests/GameServer.Core.Tests -c Release
@@ -233,8 +233,9 @@ In rough order. Each is a wave of its own.
 1. **The rest of the character** (waves 16–17 did the name, class, level, life, mana and attributes):
    - why the HUD's mana starts near 32 whatever pool is sent (perhaps the second mana pool at `+0x330`);
    - the accuracy and spirit stat keys; passives and items;
-   - the `0x11` / `0x15` detail blob (31 records of `0x80` bytes, `0x1420e5c10`), so the character screen shows
-     the character's gear;
+   - items: starting gear and saved equipment. The character screen's preview is mapped and encoded (wave 18,
+     `CharacterPreviewPoe2`, `LoginServerSession.Poe2Preview`) but has nothing to show yet. The in-game player's
+     visible equipment (the Inventories component) is not mapped;
    - the act and premade start states (CharacterStartStates rows 12 on);
    - optionally, the Gateway's fallback for unknown tickets (`ResolvePoe2Ticket`), once the harness is retired.
 2. **Exit to Character Selection.** Its C→S `0x173` waits for a Gateway answer.
@@ -271,4 +272,5 @@ In rough order. Each is a wave of its own.
 | — | This handoff and its tools | `29d65c5` |
 | 15 | Auth logs the PoE2 Steam client in | `6200d53` |
 | 16 | Character creation, several characters, the saved character in game | `97628ee` |
-| 17 | The class's life, mana and attributes | the commit after `97628ee` |
+| 17 | The class's life, mana and attributes | `167fb9e` |
+| 18 | The character screen's preview blob | the commit after `167fb9e` |

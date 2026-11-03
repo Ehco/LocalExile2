@@ -258,7 +258,7 @@ Wave 5 maps the character list the client waits for here.
   - The leading u32 must equal the `0x04` u32: dispatch `0x1420e86b4` looks
     the login record up by it and drops the list otherwise.
   - When the selected index points at an entry, the blob is parsed into 31
-    records of 0x80 bytes (PoE1: 17), presumably the equipment preview, and
+    records of 0x80 bytes (PoE1: 17), the equipment preview (wave 18), and
     the blob plus the remaining fields go to the listeners at `login+0xd08`.
     The last u32 is a hash-map key (a missing key gives an empty result), so
     zeros are safe. An empty blob is fine.
@@ -1060,3 +1060,78 @@ Limits:
 - **No accuracy, evasion or spirit.** Accuracy and evasion are left to the
   client (the panel shows its own 5% evasion), and spirit is 0.
 - **No passives or items.** Characters have no passive tree or gear yet.
+
+## Wave 18 — the character screen's preview blob (2026-11-04)
+
+The Data blob of `0x15` (for its selected entry) and `0x11` is what the
+character screen shows the character wearing. It is now mapped and encoded
+(`CharacterPreviewPoe2`). Auth does not fill it yet, because PoE2 characters
+have no items: the saves hold none, and CharacterStartStates names no
+starting gear.
+
+- **Decoder `0x1420e5c10`.** The blob is read as 31 records of `0x80` bytes,
+  one per visual slot, each by `0x1426c41a0`. A blob that ends early throws,
+  so all 31 records are sent. An empty blob gives an empty preview
+  (`0x1420eb1e0`).
+- **A record** is PoE1's `VisibleItem` record (the in-game visible
+  equipment) without its slot byte, and with three trailing bytes instead of
+  one:
+
+  | Field | Reader → record offset |
+  |---|---|
+  | u8 type: 0 = empty, and nothing follows; else the ItemClasses row + 1 | → `+0` |
+  | skin: u16 ItemVisualIdentity HASH16, u32 MTXTypeGameSpecific HASH32, u8 | `0x1426c3d80` → `+0x18` |
+  | effect: u16 ItemVisualEffect HASH16, u32 MTXTypeGameSpecific HASH32, u8 | `0x1426c3f50` → `+0x40` |
+  | u8 ItemStances row (17-byte rows) | `0x1426c4fd0` → `+8` |
+  | u16 ItemVisualIdentity HASH16 (the item's own look) | `0x1426c4c50` → `+0x68` |
+  | u8, u8, u8 | → `+0x78`, `+0x79`, `+0x7a` |
+
+  A present record is 21 bytes. The hashes are looked up by key: a missing
+  key gives an empty reference.
+- **Visual slots.** A record's position is the visual slot of an equipment
+  inventory: the Inventories.datc64 u32 at row byte 23 (31 for none).
+
+  | Slot | Inventory |
+  |---|---|
+  | 0 | Weapon1 |
+  | 1 | Offhand1 |
+  | 2 | Weapon2 |
+  | 3 | Offhand2 |
+  | 4 | Weapon3 |
+  | 5 | Offhand3 |
+  | 6 | BodyArmour1 |
+  | 8 | Helm1 |
+  | 9 | Gloves1 |
+  | 10 | Boots1 |
+  | 14 | Ring1 |
+  | 15 | Ring2 |
+  | 16 | Belt1 |
+  | 17 | Amulet1 |
+
+  No inventory uses the other slots up to 30. They are probably for
+  cosmetics only.
+- **Data used for the test.**
+  - BaseItemTypes (PoE2): the ItemClasses key is at row byte 8, the
+    ItemVisualIdentity key at row byte 124.
+  - ItemVisualIdentity: HASH16 is at row byte 40, as on PoE1.
+  - ItemStances rows: Wand 2, Staff 5, TwoHandMace 7, Shield 9, Spear 10,
+    Crossbow 12, Talisman 19.
+- **Auth.** `LoginServerSession.Poe2Preview` (character → visible items)
+  fills the `0x15` selected entry's blob and each `0x11`. Auth leaves it
+  unset, so the blobs stay empty, as before.
+
+**Live test (2026-11-04).** Auth set the hook for the test only, then the
+experiment was removed:
+
+| Character | Items sent | Character screen |
+|---|---|---|
+| "Exile", Witch | Withered Wand in slot 0 (type 9, look `0x8a43`, stance 2) | holds a glowing wand in her right hand; before, she was empty-handed |
+| "Brakka", Warrior | Felled Greatclub in slot 0 (type 18, look `0x0153`, stance 7) | holds the club |
+| "Brakka", Warrior | the club, plus Rusted Greathelm in slot 8 (type 26, `0x1ff7`) and Rusted Cuirass in slot 6 (type 25, `0xb16e`) | also wears the helm and the plate cuirass |
+
+Limits:
+- **Not filled yet.** Nothing fills the preview until characters have items.
+  The in-game player's visible equipment (the PoE2 Inventories component,
+  sent as 2 zero bytes) is not mapped either.
+- **Unknown fields.** The three trailing bytes and the u8 after each
+  reference are sent as zeros; what they do is not known.
