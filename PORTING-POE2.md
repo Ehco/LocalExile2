@@ -13,13 +13,13 @@ real client as the renderer — the approach proven by
 | LocalExile baseline clone | done (depth 1, upstream main) |
 | .NET 10 SDK | installed via winget |
 | `dotnet build GameServer.slnx -c Release` | **passes** |
-| `dotnet test tests/GameServer.Core.Tests` | **452/452 pass** |
+| `dotnet test tests/GameServer.Core.Tests` | **458/458 pass** |
 | PoE2 client recon (login crypto) | **done — see findings** |
 | PoE2 client recon (DH groups) | **done** — groups unchanged (finding 5) |
 | PoE2 client recon (login key blobs) | **done** — all three mapped (findings 4, 6, 7) |
 | Login handshake vs patched real client | **done** — client accepts our signed `0x0002`, C→S decrypts (wave 3) |
 | PoE2 login message set | in progress — `0x04`/`0x05`/`0x0e`/`0x10`/`0x14`/`0x15`/`0x16`/`0x18` mapped; Play reaches the instance server (wave 6) |
-| PoE2 gateway/instance protocol | in progress — opening, encryption switch and area message work live; client generates the area and waits on the loading screen (wave 8) |
+| PoE2 gateway/instance protocol | in progress — opening, encryption, area, local player and enter area work live; enter area puts the client in game, which then crashes for lack of a player entity (wave 9) |
 
 ## Recon findings (2026-10-30, client build of 2026-10-08 install)
 
@@ -456,3 +456,77 @@ Code: `InstanceProtocolPoe2.StartEncryption`, `AreaInstancePoe2` (id
 Next: map C→S `0x9a`, then find PoE2's ids and layouts for the local player
 entity and enter area (dispatcher cases `0x22`/`0x23`/`0x24` are the
 likely shifted ones), and get past the loading screen.
+
+## Wave 9 — local player, enter area and create object (2026-11-03)
+
+- **Almost every instance message now starts with a u8 after its id.** We
+  saw it on `0x11`, `0x1e`, C→S `0x9a`, and on the writers of `0x1f`–`0x25`.
+  - The dispatcher's default case (`0x142125628`) uses this byte (`msg+0x10`)
+    to route the message. It picks the local player in `instance+0x48` whose
+    slot byte (`+0x181`) matches, or the first one if none does.
+  - It then hands the message to `0x142106bb0`, the per-player dispatcher for
+    ids ≥ `0x3a`.
+  - **Local players** are PoE2's local co-op. They are created at connection
+    time, with slot 0 (ctor `0x142103a60`, called from `0x141628d20`). Each
+    holds a name (`+0x160`), a slot (`+0x181`) and an entity id (`+0x184`).
+- **The S→C factory is `0x142170500`.** It maps `id - 0xd` straight to a
+  dword table at `0x1421731dc`, for ids up to `0x36b`. A second factory,
+  `0x142186c20`, builds the world group, PoE1's `0x1a8`+ ids.
+  - Compared with PoE1's instance group, PoE2 ids are shifted by +1 and gain
+    the leading u8:
+    - `0x1f` = PoE1 `0x1e` (u32, str);
+    - `0x20` = PoE1 `0x1f` (u8, u32);
+    - `0x21` = PoE1 `0x20`;
+    - `0x24` = PoE1 `0x22`/`0x23` (u32).
+  - New: `0x22` = u8, then a u8 count of (u8 slot, wstr name). It assigns
+    slots to local players by name.
+- **C→S `0x9a`** is PoE1's `0x7d` with the u8: `00`, u32 BE tile hash, u32 BE
+  doodad hash. The live values equal the client's "Tile hash: 892597717" and
+  "Doodad hash: 979693953" log lines.
+- **S→C `0x24`** (local player; write `0x141f3ce30`; case `0x142123014`) is
+  u8 route, u8 slot, u32 entity id.
+  - It sets the matching local player's `+0x184`.
+  - Through `0x142133390` it also stores the id in the world's per-slot
+    arrays (`+0x608`, `+0x630`).
+- **S→C `0x23` is enter area** (class `0x14350b338`, write `0x142157e80`,
+  read `0x1421582b0`, case `0x14212306d`). It holds PoE1 `0x21`'s fields,
+  moved into one entry per local player:
+  - u8 route;
+  - compact u32 (`+0x1f8`);
+  - u8 with three bits (`+0x1fc`/`+0x1fd`/`+0x1fe`);
+  - u8 count of entries, each: two stash tab lists (`0x142176240`, u16 count
+    first), a u8 count of u32 pairs, a wstr and bytes[3] (PoE1's flags);
+  - u8 count of a second list (`+0x110`).
+  - The case ends by setting the instance state (`+0x2270`) to **3**.
+- **S→C `0x2f7` is create object**, PoE1's `0x2b9` (class `0x14350c4f0`,
+  write `0x141f6c540`). Its handler is `0x1421343c0`, which logs "Unknown
+  object type serialized by server".
+  - The entity header (`0x141f4b740`) gained a u8: u32 id, u32, u8, u16.
+  - Then a u32 object type, and the component blob behind a **compact**
+    length (PoE1 used a u16).
+  - The handler looks the id up in the world's `+0x630` array (filled by
+    `0x24`). It then finds the local player with that `+0x184`, which raises
+    event `0xe794fcda`, as in PoE1.
+  - It only runs while the world is active (`+0x84a`, PoE1 `+0xb7a`).
+    Otherwise messages queue at `+0x6b0`.
+  - Activation is `0x14212fd90` (world vtable `0x1435083e8` slot `0x278`). It
+    sets `+0x84a`, replays the queue through `0x1421343c0` and frees it. It
+    is called from `0x1416820a0`, slot `0x220` of the vtables `0x14339d1a0`
+    and `0x1430e1b08`.
+- **Live, 2026-11-03:** we answered `0x9a` with `0024 00 00 00001000`, then a
+  minimal `0x23` (one empty entry): `0023 00 00 00 01 0000 0000 00 0000
+  000000 00`.
+  - About 14 s later the client crashed: access violation at `0x1401506fe`,
+    reading a null object at `+0x248`.
+  - The crash dump's stack holds the return address `0x1421232cb`, right after
+    case `0x23` sets state 3.
+  - So `0x23` is accepted and moves the client into the game. It then needs
+    the player entity, just as PoE1 crashed on `0x21` without one.
+
+Code: `InstanceProtocolPoe2.ReadAreaGenerated`, `SetLocalPlayer`, `EnterArea`,
+`CreateObject` (header and length only). Tests are in `InstanceWorldPoe2Tests`.
+
+Next: the PoE2 player entity. Send `0x2f7` with the character's object type
+before `0x23`, and map PoE2's component blob for a character. PoE1's order
+was traced live with Frida ([04](Agents/docs/protocol/04-player-entity.md));
+PoE2's components and order will differ.
