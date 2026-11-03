@@ -2,7 +2,8 @@
 
 Goal: a local private server for the **Path of Exile 2** Steam client
 (`PathOfExileSteam.exe`, installed at
-`C:\Program Files (x86)\Steam\steamapps\common\Path of Exile 2\`), keeping the
+`C:\Program Files (x86)\Steam\steamapps\common\Path of Exile 2\` at recon time; from wave 3 on,
+`G:\SteamLibrary\steamapps\common\Path of Exile 2\`), keeping the
 real client as the renderer — the approach proven by
 [LocalExile](https://github.com/LocalExile/LocalExile) for the PoE 3.29.3b client.
 
@@ -116,7 +117,7 @@ patched real client and the Salsa20 key-material layout are now confirmed
 ## Environment notes
 
 - Build: `dotnet build GameServer.slnx -c Release`
-  (dotnet at `C:\Program Files\dotnet\dotnet.exe`).
+  (.NET 10 SDK; on the wave 3+ machine it is user-local in `~/.dotnet`, see HANDOFF-POE2.md).
 - Tests: `dotnet test tests/GameServer.Core.Tests -c Release`.
 - PoE2 install: see header. `logs/Client.txt` confirms the account plays on the
   live servers — when sniffing, avoid touching the live account; prefer a
@@ -340,8 +341,8 @@ Tooling notes:
   `Bundles2/_.index.bin` with `GameIndex.Parse` and reading each bundle from
   disk works, with bundle names relative to the install root.
 - PoE2's index needs the Node `ooz-wasm` decoder (`npm ci` in `Tools/ooz`);
-  `ManagedOodleDecoder` fails on it. `Tools/ooz/node_modules` is not in
-  `.gitignore`.
+  `ManagedOodleDecoder` fails on it. (`Tools/ooz/node_modules` is ignored by
+  the `node_modules/` rule in `.gitignore`.)
 
 Code: `CharacterDetailRequestPoe2` (`0x10`) and `U32U16U16` (`0x16`) in the
 PoE2 dialect; `0x14` reuses `InstanceInfo`.
@@ -741,7 +742,7 @@ PoE1 client (HNC mask), data tables or saves. Per connection it:
     per chunk. Seen on entering: `0xbc`, `0x2e8`, `0x13d`.
 
 **Live test (2026-11-03).** The harness ran only the login, with the
-Gateway's keyring (`Game_INSTANCE_SECRET`). The client connected to the
+Gateway's keyring (`INSTANCE_SECRET`, the Gateway's `Game_INSTANCE_SECRET` file). The client connected to the
 Gateway on 6112, entered Clearfell Encampment, and walked around the camp on
 the Gateway's `0x64` echoes.
 
