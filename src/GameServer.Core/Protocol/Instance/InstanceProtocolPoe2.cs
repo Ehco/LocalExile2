@@ -38,21 +38,30 @@ public static class InstanceProtocolPoe2
     /// S→C 0x23 (class 0x14350b338, write 0x142157e80, read 0x1421582b0; dispatcher case 0x14212306d): PoE1's enter
     /// area 0x21, with its fields moved into one entry per local player. u8 route, compact u32 (+0x1f8), u8 bits (+0x1fc,
     /// +0x1fd, +0x1fe), u8 count of entries: two stash tab lists (0x142176240, u16 count first), u8 count of u32 pairs,
-    /// wstr, bytes[3] (PoE1's flag bits); then u8 count of a second list (+0x110; empty here). The handler gives the
-    /// message to every local player (0x14210c170).
+    /// wstr, bytes[3] (PoE1's flag bits); then u8 count of player records (+0x110, 0x68 bytes each).
+    /// <para>The handler gives the message to every local player (0x14210c170), which takes the record whose entity id is
+    /// its own (+0x184, set by 0x24) and returns early without one. A record: u32 entity id; u8 bits 0–5 = index of its
+    /// entry above, bit 6 → +7, bit 7 → +6 (+6 set: look up a skill); u8 flags (bit 0 → +8, bit 1 → +9, bit 2 → +0xa;
+    /// the reader's default is +8 = 1); u8 +5; three rows of Data/Balance/CharacterShapeshiftBasicSkills.dat (0x141f4d170,
+    /// 0xff = none), one per weapon set, copied to the local player's +0x7980; u16 count of u16 (at most three kept).
+    /// Each weapon inventory panel (rows 2/3, 14/15, 79/80 → set 0, 1, 2; 0x142606af0) reads its set's row without a
+    /// null check (0x14049849b), so all three must be valid; the table has exactly three rows.</para>
     /// </summary>
-    public static byte[] EnterArea(int localPlayers = 1)
+    public static byte[] EnterArea(params uint[] localPlayerIds)
     {
         var w = new LoginWriter().U16(EnterAreaId).U8(0);
         InstanceProtocol.CompactUInt(w, 0);
-        w.U8(0).U8(checked((byte)localPlayers));
-        for (int i = 0; i < localPlayers; i++)
+        w.U8(0).U8(checked((byte)localPlayerIds.Length));
+        foreach (var _ in localPlayerIds)
         {
             InstanceStash.WriteTabs(w, []);
             InstanceStash.WriteTabs(w, []);
             w.U8(0).WStr("").Bytes([0, 0, 0]);
         }
-        return w.U8(0).ToArray();
+        w.U8((byte)localPlayerIds.Length);
+        for (int i = 0; i < localPlayerIds.Length; i++)
+            w.U32(localPlayerIds[i]).U8(checked((byte)i)).U8(1).U8(0).Bytes([0, 1, 2]).U16(0);
+        return w.ToArray();
     }
 
     /// <summary>

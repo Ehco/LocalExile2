@@ -30,13 +30,17 @@ public class InstanceWorldPoe2Tests
     }
 
     [Fact]
-    public void Enter_area_sends_one_empty_entry_per_local_player()
+    public void Enter_area_sends_an_entry_and_a_player_record_per_local_player()
     {
         // Writer 0x142157e80: u8 route, compact u32 +0x1f8, u8 bits, u8 count + entries (two stash tab lists, u8 count of
-        // u32 pairs, wstr, bytes[3]), u8 count of the second list.
+        // u32 pairs, wstr, bytes[3]), then u8 count + player records (u32 entity id, u8 entry index | bits, u8 flags, u8,
+        // three CharacterShapeshiftBasicSkills rows, u16 count of u16).
         string entry = "0000" + "0000" + "00" + "0000" + "000000";
-        Assert.Equal("0023" + "00" + "00" + "00" + "01" + entry + "00", Convert.ToHexString(InstanceProtocolPoe2.EnterArea()));
-        Assert.Equal("0023" + "00" + "00" + "00" + "02" + entry + entry + "00", Convert.ToHexString(InstanceProtocolPoe2.EnterArea(localPlayers: 2)));
+        string Record(string id, string index) => id + index + "01" + "00" + "00" + "01" + "02" + "0000";
+        Assert.Equal("0023" + "00" + "00" + "00" + "01" + entry + "01" + Record("00001000", "00"),
+            Convert.ToHexString(InstanceProtocolPoe2.EnterArea(0x1000)));
+        Assert.Equal("0023" + "00" + "00" + "00" + "02" + entry + entry + "02" + Record("00001000", "00") + Record("00001001", "01"),
+            Convert.ToHexString(InstanceProtocolPoe2.EnterArea(0x1000, 0x1001)));
     }
 
     [Fact]

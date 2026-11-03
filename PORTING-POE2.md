@@ -13,13 +13,13 @@ real client as the renderer — the approach proven by
 | LocalExile baseline clone | done (depth 1, upstream main) |
 | .NET 10 SDK | installed via winget |
 | `dotnet build GameServer.slnx -c Release` | **passes** |
-| `dotnet test tests/GameServer.Core.Tests` | **458/458 pass** |
+| `dotnet test tests/GameServer.Core.Tests` | **464/464 pass** |
 | PoE2 client recon (login crypto) | **done — see findings** |
 | PoE2 client recon (DH groups) | **done** — groups unchanged (finding 5) |
 | PoE2 client recon (login key blobs) | **done** — all three mapped (findings 4, 6, 7) |
 | Login handshake vs patched real client | **done** — client accepts our signed `0x0002`, C→S decrypts (wave 3) |
 | PoE2 login message set | in progress — `0x04`/`0x05`/`0x0e`/`0x10`/`0x14`/`0x15`/`0x16`/`0x18` mapped; Play reaches the instance server (wave 6) |
-| PoE2 gateway/instance protocol | in progress — opening, encryption, area, local player and enter area work live; enter area puts the client in game, which then crashes for lack of a player entity (wave 9) |
+| PoE2 gateway/instance protocol | in progress — the client enters Clearfell Encampment with a player entity, inventories and the in-game HUD; the world is not drawn yet (wave 10) |
 
 ## Recon findings (2026-10-30, client build of 2026-10-08 install)
 
@@ -530,3 +530,91 @@ Next: the PoE2 player entity. Send `0x2f7` with the character's object type
 before `0x23`, and map PoE2's component blob for a character. PoE1's order
 was traced live with Frida ([04](Agents/docs/protocol/04-player-entity.md));
 PoE2's components and order will differ.
+
+## Wave 10 — player entity, inventories and the in-game HUD (2026-11-03)
+
+- **The client spawns the player and shows the HUD.** Tested live with this
+  sequence after `0x9a`:
+  1. `0x24` local player;
+  2. `0x2f7` for `Metadata/Characters/Int/IntFour`, with a 242-byte blob;
+  3. 121 × `0xdf` inventories;
+  4. `0x23` with a player record.
+
+  The client logs "[LOADING SCREEN] (Clearfell Encampment) Duration = 1.8
+  seconds" and stays connected. It sends C→S `0x1c` (u8 + u32) every 100 ms
+  and once `0062 00 01`. The HUD shows Life 100, Shield 50, the weapon sets
+  and the skill bar. With the position at (200, 200) the minimap marker sits
+  inside the encampment. **The 3D world is not drawn yet:** the screen stays
+  grey.
+- **Player blob.** The object type key is the PoE1 MurmurHash2 of the path:
+  `IntFour` → `0xa7000ea0`, found by the type lookup `0x141693840`.
+  - PoE2 has no per-class `.ot`; `Character.ot` lists Stats, Positioned,
+    Pathfinding, Buffs, Life, Animated, Player, PlayerClass, Inventories and
+    Actor, plus client-side Render, Targetable and BuffOrbs.
+  - The blob reader is `0x141e712a0`: u8 flags (bit0 → `+0x8d|1`, bit1 →
+    `+0x8d|4`), base data (`0x141e715a0`), each component's vtable `+0x98`
+    deserializer, then tasks (u8 count × u16 id + `0x141e7dd60`).
+  - Live Frida trace of the component order and sizes (zero blob, life > 0):
+
+    | Component | Deserializer | Bytes |
+    |---|---|---|
+    | Positioned | `0x141dd89a0` | 17: i32 x, i32 y, f32 rotation, u16, **three** flag bytes (PoE1: two) |
+    | Stats | `0x142181160` | 13 |
+    | Pathfinding | — | 0 |
+    | Buffs | `0x141db5080` | 2 |
+    | Life | `0x141d8c260` | 125 |
+    | Animated | `0x141da66c0` | 1 |
+    | Player | `0x141dcf4a0` | 39 |
+    | PlayerClass | — | 0 |
+    | Inventories | `0x1416e6d70` | 2 |
+    | Actor | `0x1416d8210` | 40 (48 when life is 0) |
+
+  - Life: pool `+0x1a8` (life), base `+0x200`, pool `+0x240` (energy shield),
+    base `+0x298`, pools `+0x2e0` and `+0x330`, three (u32, i16) at `+0x380`,
+    one more at `+0x398`, flags u8. A pool is PoE1's u32 current, u32, u16,
+    u32, u32; a base is 14 bytes.
+  - Current life ≤ 0 sends the object down the death path (`0x141d87120`),
+    which crashed. Mana is not in the third, fifth or sixth pool: values put
+    at blob offsets 98, 116 and 134 left the mana orb at 0.
+- **S→C `0xdf` = add inventory**, PoE1's `0xc0` (class `0x1431064e0`, read
+  `0x140ca2c20`).
+  - Inventory messages now go through the per-local-player dispatcher
+    `0x142106bb0`: `0xde` changes an inventory (PoE1 `0xbf`), `0xdf` adds one
+    and `0xe0` removes one (PoE1 `0xc1`).
+  - `0xdf` is u8 route, u8 manager (`0x142115810`), u32 BE inventory id, then
+    the inventory object (`0x1425aa790`). That object is unchanged from PoE1:
+    u8 kind (`+0x140`), u8 row (`+0x144`), u8 width, u8 height, u8 flags,
+    compact item count (`0x1425aaa50`). Flag bits 3 and 4 add a u64 and four
+    u32.
+  - PoE1's two trailing bytes are gone.
+  - Without inventories, the UI built on entering throws "Invalid inventory
+    id". The throw is in `0x14042daa0`, after the lookup `0x141cf1b70` (a
+    sorted vector at manager `+0x168`) fails.
+  - As on PoE1, we register an empty inventory for every Inventories row
+    (id = row + 1). `data/balance/inventories.datc64` (0.5.5e) has 121 rows
+    with PoE1's columns.
+- **The `0x23` second list is one record per local player.** It is required.
+  The per-player handler `0x14210c170` takes the record whose u32 matches the
+  player's entity id. Without one, it returns before setting up the weapon
+  sets.
+  - Record layout: u32 BE entity id; u8 (bits 0–5 entry index, bit 6 →
+    `+7`, bit 7 → `+6`); u8 flags (bit 0 → `+8`, bit 1 → `+9`, bit 2 →
+    `+0xa`); u8 `+5`; three u8 rows of
+    `Data/Balance/CharacterShapeshiftBasicSkills.dat` (`0x141f4d170`, `0xff`
+    = none), copied to the local player's `+0x7980`; u16 BE count of u16.
+  - The weapon inventory panels map rows 2/3, 14/15 and 79/80 to sets 0/1/2
+    (`0x142606af0`). They read the set's row without a null check
+    (`0x14049849b`), so all three rows must be valid. The table has exactly
+    three rows; we send 0, 1, 2.
+
+Code: `InstanceInventoriesPoe2` (`AddInventory`, `PlayerDefaults`),
+`PlayerObjectPoe2` (position, life, energy shield; everything else zero), and
+`InstanceProtocolPoe2.EnterArea(params uint[] localPlayerIds)` with the player
+records. Tests are in `InstanceInventoriesPoe2Tests`, `PlayerObjectPoe2Tests`
+and `InstanceWorldPoe2Tests`.
+
+Next:
+- why the world stays grey (a missing message, or a Positioned/Render flag
+  such as PoE1's "shown" bits);
+- mapping Player (name, class, experience), Stats and mana;
+- C→S `0x1c` and `0x62`.
