@@ -14,6 +14,9 @@ public class LoginMessagePoe2Tests
         (LoginDirection.ClientToServer, new U32Message(0x18, 7)),
         (LoginDirection.ServerToClient, new CharacterListPoe2(7, [Entry("Hero")], 0, 3, 1, 2, [9], [new(0x10, -5), new(0x20, 0x12345)], 4, 5)),
         (LoginDirection.ClientToServer, new PlayPoe2(0x80, [new(1, 2), new(3, 4)])),
+        (LoginDirection.ClientToServer, new CharacterDetailRequestPoe2(7, 2)),
+        (LoginDirection.ServerToClient, new U32U16U16(0x16, 7, 0x1234, 0x5678)),
+        (LoginDirection.ServerToClient, new InstanceInfo("127.0.0.1", 6112, 1, 0xabcd, 2, B(64, 0x11), B(8, 0x22), 0)),
     ];
 
     private static CharacterEntryPoe2 Entry(string name) => new(name, "Standard", 0, 0, 12, 0, 3, 0, 1, 0, 0, 0, 0);
@@ -119,11 +122,40 @@ public class LoginMessagePoe2Tests
     }
 
     [Fact]
-    public void Poe2_knows_the_same_ids_as_poe1()
+    public void Character_detail_request_sends_the_record_id_then_the_character_index()
+    {
+        // Captured 2026-11-03 right after 0x15: 0010 00000000 00. Writer 0x1420e4b70: u32 +0x10, then u8 +0x14.
+        Assert.True(LoginCodec.TryDecode(LoginDirection.ClientToServer, Convert.FromHexString("00100000000000"), out var m, out int n, LoginDialect.Poe2));
+        Assert.Equal(new CharacterDetailRequestPoe2(0, 0), m);
+        Assert.Equal(7, n);
+        Assert.Equal("0010" + "00000007" + "02", Convert.ToHexString(LoginMessage.Encode(new CharacterDetailRequestPoe2(7, 2))));
+    }
+
+    [Fact]
+    public void Message_0x16_is_a_u32_and_two_u16s()
+    {
+        // Reader 0x14214de80: u32 +0x10, u16 +0x14, u16 +0x16.
+        Assert.Equal("0016" + "00000007" + "1234" + "5678", Convert.ToHexString(LoginMessage.Encode(new U32U16U16(0x16, 7, 0x1234, 0x5678))));
+    }
+
+    [Fact]
+    public void Instance_info_keeps_the_poe1_layout()
+    {
+        // Reader 0x14214ee60: str host, u16 port, u32, u16 area hash, u32, bytes[64], bytes[8], u8 — PoE1's 0x14.
+        byte[] wire = LoginMessage.Encode(new InstanceInfo("h", 6112, 1, 0xabcd, 2, B(64, 0x11), B(8, 0x22), 3));
+        Assert.True(LoginCodec.TryDecode(LoginDirection.ServerToClient, wire, out var m, out _, LoginDialect.Poe2));
+        Assert.Equal(0xabcd, Assert.IsType<InstanceInfo>(m).AreaHash);
+    }
+
+    [Fact]
+    public void Poe2_knows_poe1_ids_plus_0x10_and_0x16()
     {
         foreach (var dir in Enum.GetValues<LoginDirection>())
             for (int id = 0; id < 0x100; id++)
-                Assert.Equal(LoginCodec.IsKnown(dir, (ushort)id), LoginCodec.IsKnown(dir, (ushort)id, LoginDialect.Poe2));
+            {
+                bool added = (dir, id) is (LoginDirection.ClientToServer, 0x10) or (LoginDirection.ServerToClient, 0x16);
+                Assert.Equal(added || LoginCodec.IsKnown(dir, (ushort)id), LoginCodec.IsKnown(dir, (ushort)id, LoginDialect.Poe2));
+            }
     }
 
     [Fact]

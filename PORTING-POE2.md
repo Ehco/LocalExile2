@@ -13,13 +13,13 @@ real client as the renderer — the approach proven by
 | LocalExile baseline clone | done (depth 1, upstream main) |
 | .NET 10 SDK | installed via winget |
 | `dotnet build GameServer.slnx -c Release` | **passes** |
-| `dotnet test tests/GameServer.Core.Tests` | **439/439 pass** |
+| `dotnet test tests/GameServer.Core.Tests` | **445/445 pass** |
 | PoE2 client recon (login crypto) | **done — see findings** |
 | PoE2 client recon (DH groups) | **done** — groups unchanged (finding 5) |
 | PoE2 client recon (login key blobs) | **done** — all three mapped (findings 4, 6, 7) |
 | Login handshake vs patched real client | **done** — client accepts our signed `0x0002`, C→S decrypts (wave 3) |
-| PoE2 login message set | in progress — `0x04`/`0x05`/`0x0e`/`0x15`/`0x18` mapped; character list shows, Play waits for `0x14` (wave 5) |
-| PoE2 gateway/instance protocol | not started |
+| PoE2 login message set | in progress — `0x04`/`0x05`/`0x0e`/`0x10`/`0x14`/`0x15`/`0x16`/`0x18` mapped; Play reaches the instance server (wave 6) |
+| PoE2 gateway/instance protocol | started — first instance message captured, 1 byte shorter than PoE1's (wave 6) |
 
 ## Recon findings (2026-10-30, client build of 2026-10-08 install)
 
@@ -291,3 +291,62 @@ Next: map C→S `0x10`, then PoE2's S→C `0x14` (instance assignment, read
 `0x14214ee60`), which Play waits for. Then wire the PoE2 dialect into
 `LoginServerSession`/`GameServer.Auth` (which local account a Steam token
 maps to is an open design choice).
+
+## Wave 6 — 0x10, 0x16 and the instance assignment 0x14 (2026-11-03)
+
+- **C→S `0x10`** (vtable `0x143506350`, write `0x1420e4b70`): `u32 record id,
+  u8 index` (wave 5 read the capture the wrong way round; the bytes are all
+  zero either way).
+  - Path: the character screen (`0x140f08950`) queues (record id, key of its
+    per-character cache at `screen+0x2b8`) through `0x1420ea450` when that
+    character's cached entry is missing or flagged dirty (`+0x3d`). The login
+    update `0x1420e6d40` pops the queue on a timer and sends `0x10` only if
+    the login record with that id (the `0x04` u32) exists.
+  - The id was set through a register (`mov ebx, 0x10`), which is why the
+    id-immediate scans missed it. Found by listing message vtables whose
+    writer emits exactly 5 field bytes.
+  - Live: `0010 00000000 00` now decodes as `CharacterDetailRequestPoe2`.
+    The client goes on without an answer.
+- **S→C `0x16`** (vtable `0x143509e58`, write `0x14214ddd0`, read
+  `0x14214de80`): `u32, u16, u16`. Dispatch `0x1420e8f26` hands all three to
+  the listeners at `login+0x288`. New in PoE2 and probably the answer to
+  `0x10`, which is not verified. It is in the codec as the shape-named
+  `U32U16U16`.
+- **S→C `0x14`** (read `0x14214ee60`, dispatch case at `0x1420e9078`) is
+  unchanged from PoE1's `InstanceInfo`: `str host, u16 port, u32 address,
+  u16 area hash, u32 ticket, bytes[64] key, bytes[8], u8`. The area hash is
+  looked up through `0x1423e3f10`.
+  - Live: Play was answered with `InstanceInfo("127.0.0.1", 6112,
+    0x7f000001, 0x3f70, ticket 1, key, zeros, 0)`, as
+    `LoginServerSession.InstanceAssignment` builds it. The client showed the
+    **Clearfell Encampment** loading screen and connected to
+    `127.0.0.1:6112`.
+  - `0x3f70` is the HASH16 of `G1_town` in PoE2's
+    `data/balance/worldareas.datc64`. The early columns (Id, Name, Act,
+    IsTown, HasWaypoint, Connections, AreaLevel, HASH16) still parse with
+    `scripts/re/worldareas.py`.
+- **Instance opening (C→S, plaintext)**, captured:
+  `000F 00000001 000E 12BEA056029C953E6AE9B7C8 7F000001 00000000 04`, which
+  is 29 bytes. PoE1's `InstanceProtocol.TryReadOpening` expects 30.
+  - The ticket and address are the ones `0x14` gave, in PoE1's positions.
+  - The tail is a single byte `0x04` where PoE1 sent realm `0x40` and a flag
+    byte.
+  - The client then waits on the loading screen for the server.
+
+Tooling notes:
+
+- The Steam install has loose `Bundles2/*.bundle.bin` files and no
+  `Content.ggpk`, so `GameFileSystem.Open`/`ggdump` can't read it. Parsing
+  `Bundles2/_.index.bin` with `GameIndex.Parse` and reading each bundle from
+  disk works, with bundle names relative to the install root.
+- PoE2's index needs the Node `ooz-wasm` decoder (`npm ci` in `Tools/ooz`);
+  `ManagedOodleDecoder` fails on it. `Tools/ooz/node_modules` is not in
+  `.gitignore`.
+
+Code: `CharacterDetailRequestPoe2` (`0x10`) and `U32U16U16` (`0x16`) in the
+PoE2 dialect; `0x14` reuses `InstanceInfo`.
+
+Next: the PoE2 instance opening (29 bytes; what the last byte means), then
+the instance server's reply. In parallel, wire the PoE2 dialect into
+`LoginServerSession`/`GameServer.Auth`; which local account a Steam token
+maps to is an open design choice.

@@ -127,3 +127,28 @@ public sealed record PlayPoe2(byte Flags, IReadOnlyList<U32Pair> Pairs) : ILogin
         return new(flags, pairs);
     }
 }
+
+/// <summary>
+/// C→S 0x10 on PoE2 (vtable 0x143506350, write 0x1420e4b70): u32 RecordId, then u8 Index. The character screen
+/// (0x140f08950) queues (RecordId = the 0x04 record's U32_10, Index = key of its per-character cache at screen+0x2b8)
+/// through 0x1420ea450 when that character's cached entry is missing or flagged dirty (+0x3d); the login update
+/// 0x1420e6d40 pops the queue on a timer and sends it only if a login record with that id exists. Seen live right after
+/// 0x15 as 0010 00000000 00 (2026-11-03). The reply is probably S→C 0x16 (not verified).
+/// </summary>
+public sealed record CharacterDetailRequestPoe2(uint RecordId, byte Index) : ILoginMessage
+{
+    public const ushort Id = 0x10;
+    public ushort MessageId => Id;
+    public void WriteFields(LoginWriter w) => w.U32(RecordId).U8(Index);
+    internal static CharacterDetailRequestPoe2 Read(ushort id, ref LoginReader r) => new(r.U32(), r.U8());
+}
+
+/// <summary>
+/// S→C 0x16 on PoE2 (vtable 0x143509e58, write 0x14214ddd0, read 0x14214de80): u32 +0x10, u16 +0x14, u16 +0x16, all
+/// handed to the listeners at login+0x288 (dispatch 0x1420e8f26). Meaning unknown; likely the answer to C→S 0x10.
+/// </summary>
+public sealed record U32U16U16(ushort MessageId, uint U32, ushort A, ushort B) : ILoginMessage
+{
+    public void WriteFields(LoginWriter w) => w.U32(U32).U16(A).U16(B);
+    internal static U32U16U16 Read(ushort id, ref LoginReader r) => new(id, r.U32(), r.U16(), r.U16());
+}
