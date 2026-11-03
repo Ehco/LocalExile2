@@ -13,13 +13,13 @@ real client as the renderer — the approach proven by
 | LocalExile baseline clone | done (depth 1, upstream main) |
 | .NET 10 SDK | installed via winget |
 | `dotnet build GameServer.slnx -c Release` | **passes** |
-| `dotnet test tests/GameServer.Core.Tests` | **445/445 pass** |
+| `dotnet test tests/GameServer.Core.Tests` | **449/449 pass** |
 | PoE2 client recon (login crypto) | **done — see findings** |
 | PoE2 client recon (DH groups) | **done** — groups unchanged (finding 5) |
 | PoE2 client recon (login key blobs) | **done** — all three mapped (findings 4, 6, 7) |
 | Login handshake vs patched real client | **done** — client accepts our signed `0x0002`, C→S decrypts (wave 3) |
 | PoE2 login message set | in progress — `0x04`/`0x05`/`0x0e`/`0x10`/`0x14`/`0x15`/`0x16`/`0x18` mapped; Play reaches the instance server (wave 6) |
-| PoE2 gateway/instance protocol | started — first instance message captured, 1 byte shorter than PoE1's (wave 6) |
+| PoE2 gateway/instance protocol | started — client opening mapped (wave 7); the server's answer is unverified |
 
 ## Recon findings (2026-10-30, client build of 2026-10-08 install)
 
@@ -347,6 +347,54 @@ Code: `CharacterDetailRequestPoe2` (`0x10`) and `U32U16U16` (`0x16`) in the
 PoE2 dialect; `0x14` reuses `InstanceInfo`.
 
 Next: the PoE2 instance opening (29 bytes; what the last byte means), then
-the instance server's reply. In parallel, wire the PoE2 dialect into
+the instance server's reply (done in wave 7). In parallel, wire the PoE2 dialect into
 `LoginServerSession`/`GameServer.Auth`; which local account a Steam token
 maps to is an open design choice.
+
+## Wave 7 — the instance opening (2026-11-03)
+
+- **Where it is sent from.** The instance tick `0x142120cf0` logs "Connect
+  time to instance server" and then calls `0x14211fac0(this, byte
+  [0x14458c75d])`, PoE2's version of PoE1's `0x142148500`. That function
+  sets the state (`+0x2270`) to 2, sends `0x0F` then `0x0E`, and flushes with
+  `0x142198110`.
+- **`0x0F`** (vtable `0x1434e5c08`): u32 ticket, from the 0x14 info at
+  `+0x34`. Unchanged from PoE1.
+- **`0x0E`** (vtable `0x1434e5798`, size 0x38, write `0x141f373a0`, read
+  `0x141f37490`):
+
+  | Field | Size | Source |
+  |---|---|---|
+  | digest | bytes[8] | hash over the 8-byte constant at `0x142f0bc40`, the 0x14 `Data8` (info `+0x78`) and the time |
+  | time | u32 | `0x142c28850`, Unix seconds |
+  | address | u32 | the 0x14 info at `+0x30` |
+  | u32 | u32 | always 0 |
+  | packed | u8 | bits 0–3: the function's byte argument (global `0x14458c75d`, 4 live); bits 4, 5, 6, 7: bools at `+0x2c`, `+0x2d`, `+0x2f`, `+0x2e` (all 0) |
+
+  - That is 29 bytes with `0x0F`. PoE1 sent `bytes[12], u32, u32, u8 realm
+    0x40, u8 flag`.
+  - PoE2 dropped the realm byte and folded the flag into the low nibble.
+  - The capture fits exactly: time `0x6AE9B7C8` is 3 s after the login
+    server's `0x1b` time. So PoE1's "12-byte digest" was probably also 8
+    bytes of hash plus the time (not re-checked on PoE1).
+- **Live, 2026-11-03** (two runs): `InstanceOpeningPoe2.TryRead` parsed both
+  openings. Each had ticket 1, the address from 0x14, flag 4, all bools 0,
+  and the client clock in the time field.
+- **The server's answer is not verified.**
+  - We answered with PoE1's plaintext `00 11`. The client kept the connection
+    open and sent nothing on it. PoE1's client also waits there for the
+    area message.
+  - We then sent PoE1's `0x1d` (`AreaInstance` for `0x3f70`), encrypted with
+    `InstanceKeyring.Ciphers(ticket)`. The client logged nothing after
+    "Connect time to instance server" (PoE1 logs "Generating level …") and
+    exited 33 s later. Both sockets closed and no dump was written.
+  - So one or more of these is wrong for PoE2: `0x11` as the encryption
+    switch, the instance keying, or `0x1d`'s id or layout.
+
+Code: `InstanceOpeningPoe2` (`TryRead`, `Length` = 29) next to
+`InstanceProtocol`; `InstanceOpeningPoe2Tests`.
+
+Next: map PoE2's instance S→C dispatcher (PoE1: the vtable at `this+8`,
+slot 0), especially the `0x11` case (which Salsa20 pair it installs, and
+from which key bytes) and the area message (PoE1 `0x1d`). Then retry the
+probe.
