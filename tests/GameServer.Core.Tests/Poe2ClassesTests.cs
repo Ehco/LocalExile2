@@ -29,6 +29,23 @@ public class Poe2ClassesTests
         Assert.Equal(cls, Poe2Classes.ClassOfRow(row));
     }
 
+    [Fact]
+    public void Every_class_starts_with_29_attribute_points_15_in_its_own_or_11_in_each_of_two()
+    {
+        Assert.All(Poe2Classes.Rows, r =>
+        {
+            Assert.Equal(29, r.Strength + r.Dexterity + r.Intelligence);
+            int[] attributes = [r.Strength, r.Dexterity, r.Intelligence];
+            Assert.True(attributes.Order().SequenceEqual([7, 7, 15]) || attributes.Order().SequenceEqual([7, 11, 11]));
+        });
+        // The "Fourb" classes share their "Four" counterpart's attributes (Characters.datc64 rows 0-5 and 6-11).
+        for (int i = 0; i < 6; i++)
+        {
+            var (four, fourb) = (Poe2Classes.Rows[i], Poe2Classes.Rows[i + 6]);
+            Assert.Equal((four.Strength, four.Dexterity, four.Intelligence), (fourb.Strength, fourb.Dexterity, fourb.Intelligence));
+        }
+    }
+
     [Theory]
     [InlineData("StrFourDefault", CharacterClass.Marauder)]
     [InlineData("IntFourDefault", CharacterClass.Witch)]

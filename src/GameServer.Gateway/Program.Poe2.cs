@@ -104,11 +104,15 @@ partial class Program
                     $"0x1e area 0x{area:x4} seed {seed} instance {instance}");
 
                 var row = Poe2Classes.Of(ticket.Class);
-                Console.WriteLine($"[gateway] {remote} {ticket.Character}: level {ticket.Level} {ticket.Class} ({row.ObjectType})");
+                // The client derives no life or mana from the attributes: the final values go in the Stats, full pools.
+                var sheet = Poe2CharacterStats.For(row, ticket.Level);
+                Console.WriteLine($"[gateway] {remote} {ticket.Character}: level {ticket.Level} {ticket.Class} ({row.ObjectType}), "
+                    + $"life {sheet.MaximumLife}, mana {sheet.MaximumMana}");
                 // The level start (ExperienceLevels: PoE2 0.5.5e's matches PoE1's) needs data/tables/ExperienceLevels.json;
                 // without it the experience is 0 and the client shows level 1.
                 var session = new InstanceSessionPoe2(new PlayerObjectPoe2(
-                    InstanceSessionPoe2.G1TownSpawn.X, InstanceSessionPoe2.G1TownSpawn.Y, Life: 100, Mana: 30,
+                    InstanceSessionPoe2.G1TownSpawn.X, InstanceSessionPoe2.G1TownSpawn.Y,
+                    Life: (uint)sheet.MaximumLife, Mana: (uint)sheet.MaximumMana, Stats: sheet.Stats,
                     Name: ticket.Character, ClassRow: row.Index, Experience: CharacterStats.ExperienceFor(ticket.Level)),
                     objectType: row.ObjectType, walkable: Poe2Walkability(remote, area, seed));
                 var clock = Stopwatch.StartNew();

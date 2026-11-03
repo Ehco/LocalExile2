@@ -20,7 +20,7 @@ real client as the renderer — the approach proven by
 | PoE2 client recon (login key blobs) | **done** — all three mapped (findings 4, 6, 7) |
 | Login handshake vs patched real client | **done** — client accepts our signed `0x0002`, C→S decrypts (wave 3) |
 | PoE2 login message set | in progress — `0x04`/`0x05`/`0x0e`/`0x10`/`0x11`/`0x12`/`0x13`/`0x14`/`0x15`/`0x16`/`0x18`/`0x1b` mapped; Play reaches the instance server (wave 6); characters are created and chosen (wave 16) |
-| PoE2 gateway/instance protocol | in progress — the client enters Clearfell Encampment with a player entity, inventories and the in-game HUD, the area and the player are drawn once server frames run (wave 11), and the player walks when the server echoes its direction moves (wave 12); the Gateway serves all of it with `Game_CLIENT=poe2` (wave 13), and its walk estimate stops at the camp's walls (wave 14); Auth logs the Steam client in and sends it there (wave 15), and the player is the saved character: name, class model and level (wave 16) |
+| PoE2 gateway/instance protocol | in progress — the client enters Clearfell Encampment with a player entity, inventories and the in-game HUD, the area and the player are drawn once server frames run (wave 11), and the player walks when the server echoes its direction moves (wave 12); the Gateway serves all of it with `Game_CLIENT=poe2` (wave 13), and its walk estimate stops at the camp's walls (wave 14); Auth logs the Steam client in and sends it there (wave 15), and the player is the saved character: name, class model and level (wave 16), with its class's life, mana and attributes (wave 17) |
 
 ## Recon findings (2026-10-30, client build of 2026-10-08 install)
 
@@ -996,4 +996,67 @@ Limits:
   logs into the same account (the Steam account has a random password, so
   this takes a dev password reset).
 - Every PoE2 character still starts in Clearfell Encampment, with the
-  Gateway's fixed life, mana and an empty skill bar.
+  Gateway's fixed life, mana and an empty skill bar (wave 17 sends the
+  class's life and mana).
+
+## Wave 17 — the class's life, mana and attributes (2026-11-04)
+
+The player now enters with its class's base life, mana and attributes at its
+level, instead of fixed pools and zero stats.
+
+- **The Stats component is PoE1's stats list** (`0x142181160`): a compact
+  count of (compact key, compact value) pairs, each set by `0x1426acb60`, then
+  12 bytes (sent as zeros). `PlayerObjectPoe2.Stats` fills the list;
+  `BlobWriter.Stats` writes it as for PoE1.
+- **Stat keys** (client key = PoE2 Stats.datc64 row + 1, checked live on the
+  character panel): `maximum_life` `0xef`, `maximum_mana` `0xf0`, `strength`
+  `0x233`, `intelligence` `0x236`, `dexterity` `0x239`.
+- **The client derives none of them.** These are live results from
+  2026-11-04, level-1 Witch:
+
+  | Stats sent | Panel |
+  |---|---|
+  | none | Life 28, Mana 34, attributes 0 |
+  | the three attributes only (Str 15, Dex 8, Int 9) | those attributes, still Life 28, Mana 34 |
+  | `maximum_life` 77 and `maximum_mana` 55 with the attributes | exactly those values |
+
+  The HUD's maximums follow the panel. So, as on PoE1, the server sends the
+  final values.
+- **The rules** (`Poe2CharacterStats`), before passives, items and buffs:
+  - **Life:** Characters BaseMaxLife (16, every class) + `life_per_level`
+    (12) × level + 2 per Strength.
+  - **Mana:** BaseMaxMana (30) + `mana_per_level` (4) × level + 2 per
+    Intelligence.
+  - **Attributes:** the class row's BaseStrength, BaseDexterity and
+    BaseIntelligence (Characters row bytes 68, 72, 76). The class's own
+    attribute is 15 and the others 7; a hybrid class has 11 in each of its
+    two and 7 in the third. The "Fourb" classes have the same attributes as
+    their "Four" counterparts.
+  - **Where the numbers come from:**
+    - `life_per_level`, `mana_per_level`, and the `*_per_level` attributes
+      (all 0) are in `Metadata/Characters/Character.ot`'s Stats.
+    - The per-attribute bonuses are the client's own attribute tooltips.
+    - With zero attributes at level 1, the rules give the client's own
+      default, 28 and 34.
+
+  Dexterity's +8 accuracy per point is not sent, because the accuracy stat
+  key is not mapped.
+- **The Gateway** sends the class's sheet at the saved level, with the life
+  and mana pools set to their maximums, and logs it
+  (`Exile: level 1 Witch (…IntFour), life 42, mana 64`).
+
+**Live test (2026-11-04).** Auth and the Gateway ran with `Game_CLIENT=poe2`:
+
+| Character | Panel | HUD |
+|---|---|---|
+| "Exile", level 1 Witch | Life 42, Mana 64, Str 7, Dex 7, Int 15 | Life 42/42 |
+| "Brakka", level 1 Warrior | Life 58, Mana 48, Str 15, Dex 7, Int 7 | Life 58/58 |
+
+Limits:
+- **Mana starts low.** The HUD's mana starts near 32 (32/64, 32/48) whatever
+  pool is sent, then regenerates to full in about 20 seconds. Life starts at
+  the pool sent. Something else sets the starting mana: perhaps the second
+  mana pool at `+0x330`, sent as zeros.
+- **No accuracy, evasion or spirit.** Accuracy and evasion are left to the
+  client (the panel shows its own 5% evasion), and spirit is 0.
+- **No passives or items.** Characters have no passive tree or gear yet.

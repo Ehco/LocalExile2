@@ -5,13 +5,16 @@ namespace GameServer.Core.Protocol.Instance;
 /// 0x141e712a0: u8 object flags, base data (0x141e715a0), each component's vtable +0x98 deserializer in the object's
 /// component order, then tasks. Order and sizes were traced live with Frida (2026-11-03, PORTING-POE2.md wave 10):
 /// Positioned 17, Stats 13, Pathfinding 0, Buffs 2, Life 125, Animated 1, Player 39, PlayerClass 0, Inventories 2,
-/// Actor 40. The position, the life, energy shield and mana pools, and the Player component's name, class and experience
-/// are mapped; everything else is sent as zeros, which the client accepts (the HUD shows the three values).
+/// Actor 40 (sizes with no stats and an empty name). The position, the stats, the life, energy shield and mana pools,
+/// and the Player component's name, class and experience are mapped; everything else is sent as zeros, which the client
+/// accepts (the HUD shows the three pools).
 /// </summary>
 /// <param name="ClassRow">Characters.datc64 row (<see cref="Accounts.Poe2Classes"/>); 1 is the Witch.</param>
 /// <param name="Experience">The client derives the level from it (0x141dd1360 → +0x204), as PoE1 does.</param>
+/// <param name="Stats">Final stat values by client key (<see cref="Poe2CharacterStats"/>): the character panel and the
+/// HUD's maximums show them.</param>
 public sealed record PlayerObjectPoe2(int GridX, int GridY, uint Life, uint EnergyShield = 0, uint Mana = 0,
-    string Name = "", byte ClassRow = 1, uint Experience = 0)
+    string Name = "", byte ClassRow = 1, uint Experience = 0, IReadOnlyList<(uint Key, int Value)>? Stats = null)
 {
     /// <summary>The blob's length with an empty name; each name character adds two bytes.</summary>
     public const int BlobLength = 242;
@@ -27,7 +30,9 @@ public sealed record PlayerObjectPoe2(int GridX, int GridY, uint Life, uint Ener
         // Positioned (0x141dd89a0): i32 x, i32 y, f32 rotation, u16 +0x1e0, three flag bytes (PoE1 had two). The type's
         // +0x29 prefix is off. The client clamps the position to the area (size × 23).
         w.I32(GridX).I32(GridY).F32(0).U16(0).U8(0).U8(0).U8(0);
-        w.Zeros(13);        // Stats (0x142181160)
+        // Stats (0x142181160): compact count of (compact key, compact value) pairs as PoE1 (0x1426acb60 sets each),
+        // then 12 bytes.
+        w.Stats(Stats).Zeros(12);
         w.U16(0);           // Buffs (0x141db5080): count
         // Life (0x141d8c260): pool +0x1a8 (life; current life is the first u32, ≤ 0 runs the death path 0x141d87120),
         // base +0x200, pool +0x240 (energy shield), base +0x298, pools +0x2e0 (mana: the HUD showed 30 sent here, live

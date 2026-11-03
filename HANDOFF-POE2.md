@@ -4,7 +4,7 @@ Read this first if you are picking up the PoE2 work. It covers where things stan
 from nothing, how to run a live test, and what to do next. The wave-by-wave findings (addresses, message layouts,
 live results) are in [PORTING-POE2.md](PORTING-POE2.md). This file points into it and does not repeat it.
 
-Last updated 2026-11-04, after wave 16.
+Last updated 2026-11-04, after wave 17.
 
 ## Where it stands
 
@@ -20,13 +20,13 @@ camp's walls.
 | Login messages | Mapped and tested: `0x04`, `0x05`, `0x0e`, `0x10`, `0x11`, `0x12`, `0x13`, `0x14`, `0x15`, `0x16`, `0x18`, `0x1b` (`LoginDialect.Poe2`) | `LoginMessagesPoe2.cs`; waves 4–6, 16 |
 | Auth for the PoE2 client | `Game_CLIENT=poe2`: every Steam ticket opens one local account (a default Witch on first use). Characters of PoE2's 12 classes are created in the Standard family of leagues and chosen with Play; Play goes to Clearfell Encampment. | `LoginServerSession.cs`, `Poe2Classes.cs`, `GameServer.Auth/Program.cs`; waves 15–16 |
 | Instance opening, encryption, area message | Done | `InstanceOpeningPoe2.cs`, `InstanceProtocolPoe2.cs`, `AreaInstancePoe2.cs`; waves 7–8 |
-| Player object, inventories, enter area | Done. The player has the saved name, class (object type) and level; life, mana and stats are fixed | `PlayerObjectPoe2.cs`, `InstanceInventoriesPoe2.cs`; waves 9–10, 16 |
+| Player object, inventories, enter area | Done. The player has the saved name, class (object type) and level, and its class's base life, mana and attributes at that level (no passives or items) | `PlayerObjectPoe2.cs`, `Poe2CharacterStats.cs`, `InstanceInventoriesPoe2.cs`; waves 9–10, 16–17 |
 | Lockstep frames (`0x2f5` / `0x2f4`) | Done; the world is drawn | wave 11 |
 | Movement (C→S `0x63`, S→C `0x64`) | Done, with a server-side walk estimate | `InstanceMovementPoe2.cs`, `DirectionWalk.cs`; wave 12 |
 | Gateway in PoE2 mode | `Game_CLIENT=poe2` | `Program.Poe2.cs`, `InstanceSessionPoe2.cs`; wave 13 |
 | Walkability | Clearfell Encampment only; the estimate stops at walls (median 2 cells off live) | `scripts/walkmaps/poe2_walkmap.py`, `AreaLayouts.LoadCells`; wave 14 |
 
-**Tests.** 560/560 pass:
+**Tests.** 572/572 pass:
 
 ```bash
 dotnet test tests/GameServer.Core.Tests -c Release
@@ -230,8 +230,9 @@ This is the method used for waves 4–14, so the next wave does not start from z
 
 In rough order. Each is a wave of its own.
 
-1. **The rest of the character** (wave 16 did the name, class and level):
-   - the class's real life, mana and attributes (the Gateway sends fixed pools and zero Stats);
+1. **The rest of the character** (waves 16–17 did the name, class, level, life, mana and attributes):
+   - why the HUD's mana starts near 32 whatever pool is sent (perhaps the second mana pool at `+0x330`);
+   - the accuracy and spirit stat keys; passives and items;
    - the `0x11` / `0x15` detail blob (31 records of `0x80` bytes, `0x1420e5c10`), so the character screen shows
      the character's gear;
    - the act and premade start states (CharacterStartStates rows 12 on);
@@ -269,4 +270,5 @@ In rough order. Each is a wave of its own.
 | 14 | Walkability, walls-aware walk estimate | `fb4576c` |
 | — | This handoff and its tools | `29d65c5` |
 | 15 | Auth logs the PoE2 Steam client in | `6200d53` |
-| 16 | Character creation, several characters, the saved character in game | the commit after `6200d53` |
+| 16 | Character creation, several characters, the saved character in game | `97628ee` |
+| 17 | The class's life, mana and attributes | the commit after `97628ee` |

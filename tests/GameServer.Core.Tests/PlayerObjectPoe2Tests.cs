@@ -53,6 +53,20 @@ public class PlayerObjectPoe2Tests
     }
 
     [Fact]
+    public void The_stats_follow_positioned_as_compact_pairs()
+    {
+        var stats = new List<(uint Key, int Value)> { (Poe2CharacterStats.MaximumLife, 42), (Poe2CharacterStats.Strength, 7) };
+        byte[] expected = new BlobWriter().Stats(stats).ToArray();
+
+        byte[] blob = new PlayerObjectPoe2(GridX: 0, GridY: 0, Life: 42, Stats: stats).Blob();
+
+        // Object flags, base data count and Positioned's 17 bytes come first; the empty list was the one count byte.
+        Assert.Equal(expected, blob[19..(19 + expected.Length)]);
+        Assert.Equal(PlayerObjectPoe2.BlobLength + expected.Length - 1, blob.Length);
+        Assert.Equal(42u, BinaryPrimitives.ReadUInt32LittleEndian(blob.AsSpan(34 + expected.Length - 1)));
+    }
+
+    [Fact]
     public void The_player_component_follows_animated()
     {
         // Positioned 17, Stats 13, Buffs 2, Life 125 and Animated 1 after the object flags and base data count.
