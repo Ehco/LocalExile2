@@ -76,7 +76,7 @@ public sealed record PlayerObjectPoe2(int GridX, int GridY, uint Life, uint Ener
     }
 
     /// <summary>The main hand's weapon type (<see cref="VisibleItem.Type"/>), 0 without a weapon.</summary>
-    byte MainHandType => Visible?.FirstOrDefault(v => v.Slot == Login.CharacterPreviewPoe2.Weapon1)?.Type ?? 0;
+    public byte MainHandType => Visible?.FirstOrDefault(v => v.Slot == Login.CharacterPreviewPoe2.Weapon1)?.Type ?? 0;
 
     private static void Pool(BlobWriter w, uint current) => w.U32(current).U32(0).U16(0).U32(0).U32(0);
 }

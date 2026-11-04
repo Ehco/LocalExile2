@@ -1751,7 +1751,8 @@ Limits:
   the Warrior was tested.
 - The weapon is given again at each entry; equipment is not saved and cannot be
   moved.
-- The weapon's own basic attack (Mace Strike etc.) is not usable.
+- The weapon's own basic attack (Mace Strike etc.) is not usable: fixed in the
+  wave 26 follow-up below (after wave 27).
 
 ## Wave 27 — NPCs, dialogue, quest flags and waypoints (2026-11-04)
 
@@ -1913,3 +1914,64 @@ Limits:
   when the player walks away. Every click on the waypoint resends `0x98`.
 - Travel is possible between the areas with a capture only (the town and
   Clearfell); the destination's waypoint must have been activated.
+
+## Wave 26 follow-up — the weapon's own attack usable (2026-11-04)
+
+Mace Strike, the Wooden Club's own attack, is offered, binds and hits. Code:
+`Poe2StartingSkills.cs` (`WeaponAttackId`, `WeaponSetOneSource`),
+`InstanceSkillsPoe2.WeaponRecords`, `InstanceSessionPoe2.EnterWorld`,
+`scripts/re/frida/poe2-trace-weapon-check.js`.
+
+- **What was wrong.** Two things: the server did not grant the weapon's attack at
+  all since wave 26 (only Default Attack), and once granted the client judged
+  it with the wrong hands. Traced live with Frida (the new script hooks the
+  per-skill evaluation `0x141e859c0`, the per-hand check `0x141e862c0` and the
+  type lookup `0x14268cdb0`): every skill was evaluated with hand types
+  **37, 119** whatever the Actor blob held, that is Unarmed (ItemClasses row 36
+  + 1) and none (`0x77`).
+- **The weapon check**, now mapped:
+  - hand types are **ItemClasses row + 1**, `0x77` none (`0x1425afac0` on an
+    ItemClasses foreign key; `0x14268cdb0` maps a type to the WieldableClasses
+    row of that ItemClasses row);
+  - `0x141e859c0(skill, out, types)` → `0x141e85dc0` (the skill's
+    ActiveSkillTypes rules, both hands) → `0x141e862c0(type, isMain, stats,
+    requirement)` per hand: with a requirement list (the
+    ActiveSkillWeaponRequirement's WieldableClasses rows, at the holder's
+    `+0x136`) the hand's row must be in it; stats `0x4c09`, `0x26ca`, `0x26cb`,
+    `0x52a7`, `0x65a9`, `0x53e7`/`0x53e8`, `0xf80`/`0xf81`, `0x56f8`, `0x1f22`
+    bend the rule. The result is two bools (main, off) and a status (0 usable,
+    2 not: `+0x18c`, which the skill button greys);
+  - **which hands**: the skill's `+0xdc` byte, the skill record's second byte
+    (wave 21 called it the stats source): bits 7–6 the weapon set, bits 5–0
+    the Actor hand record. Set 1 or 2 reads the Actor's record (`+0x2c8` +
+    `0x28` × record: u32 main, u32 off, name); **set 0 reads the Actor's
+    defaults `+0x924` / `+0x928`** (37, `0x77`). Our skills had 0, hence the
+    unarmed verdict; Default Attack passed anyway because its requirement
+    (36, "Any Melee Weapon and Unarmed") accepts the empty off hand.
+- **S→C `0x324`** (world group, vtable `0x14350c450`, reader `0x141f6b3a0`;
+  the Actor handler `0x1421497c0`, case `0x14214b15e`): the Actor's three
+  weapon records again. Object header, u8 (passed to the Actor's vtable
+  `+0x3d0`), then 3 × (u8 main type, u8 off type, wstr: u16 BE unit count +
+  UTF-16). The server sends it after the skill list with (13, `0x77`) twice
+  (the current hands and weapon set I) and an empty set II; the trace then
+  showed types 13, 119.
+- **The fix**: the weapon's attack is granted as a third skill (`0x104`, the
+  item type's GEPL/GESSPL rows, the weapon's values) with source byte `0x40`
+  (weapon set I, record 0), and `0x324` follows the skill list.
+
+**Live test (2026-11-04).** Mace Strike lit in the picker, bound to the left
+button (`0x5c` skill `0x104`); clicks on Rotting Guards sent `0x1a5` with
+`0x104`, the hits landed (`0x1cf`) and a guard died (`0x1d3`, `0x2f9`). Before
+the source byte the trace read 37/119 and the button said "[Not enough mana]"
+at full mana (a decoy label, as in wave 26).
+
+Limits:
+- Weapon set II and the weapon swap are not handled; Default Attack keeps
+  source 0 (it works through the empty off hand).
+- The creation blob's first record still sends off hand 0 (the client resets
+  it to `0x77`); `0x324` is what the client keeps.
+- C→S `0x16` (7 bytes) appears while the skill picker is open; unframed, it
+  is dropped.
+- Frida cannot attach to a client started from an elevated PowerShell
+  ("unable to access process"); start it from a normal one.
+

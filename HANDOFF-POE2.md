@@ -39,10 +39,10 @@ are saved and drive the NPCs' states; the waypoint opens the World panel and tra
 | Monster AI, player death | Aggro, chase (MoveTo `0x1e0`, no pathing), swings (`0x1c8`) and hits on the player; the death screen `0x6d`, resurrect C→S `0x6c` (teleport `0x1dd`) | `InstanceSessionPoe2.Monsters.cs`, `Poe2Monsters.AttackOf`; wave 23 |
 | Experience, levels | A kill's experience in the Player component (`0x2f9`); a new level raises and refills life and mana and is saved to Auth. The experience into a level is not saved | `InstanceSessionPoe2.Experience.cs`, `InstanceProgressionPoe2.cs`, `scripts/re/poe2/experience_levels.py`; wave 24 |
 | Drops, pickup | A kill may drop currency on the ground (`0x2f7` WorldItem, 35 % or `Game_POE2_DROP_CHANCE`); a click walks to it and puts it in the main inventory (`0x2fa`, `0xde`). The inventory is not saved | `InstanceSessionPoe2.Loot.cs`, `Poe2Inventory.cs`, `Poe2Items.cs`, `scripts/re/poe2/item_types.py`; wave 25 |
-| Starting weapon | The class's starting weapon in the main hand (`0xde` into Weapon1), drawn on the model, usable (Mods `+0x263` = 7) and swung with Default Attack at the weapon's values; monster damage scaled to 50 % (`Game_POE2_MONSTER_DAMAGE`). The weapon's own attack (Mace Strike) stays greyed; equipment is not saved | `Poe2StartingSkills.cs`, `InstanceSessionPoe2.Loot.cs`, `InstanceItems.cs`, `PlayerObjectPoe2.cs`, `Poe2Items.cs`; wave 26 |
+| Starting weapon | The class's starting weapon in the main hand (`0xde` into Weapon1), drawn on the model, usable (Mods `+0x263` = 7) and swung with Default Attack at the weapon's values; monster damage scaled to 50 % (`Game_POE2_MONSTER_DAMAGE`). The weapon's own attack (Mace Strike, skill `0x104`, weapon set I source `0x40`) is granted and usable since the Actor's weapon records go out again (`0x324`); equipment is not saved | `Poe2StartingSkills.cs`, `InstanceSkillsPoe2.cs`, `InstanceSessionPoe2.Loot.cs`, `InstanceItems.cs`, `PlayerObjectPoe2.cs`, `Poe2Items.cs`; wave 26 and its follow-up |
 | NPCs, dialogue, quest flags, waypoints | The town's NPCs, waypoint, stash and well are drawn; a click on an NPC opens its dialogue (`0xa3`), its options (`0xa1` / `0xa4`) set the quest flags (start, finish and Script flags) and play their talks, Buy opens an empty buy window (`0xaf`). The flags are saved per character (Auth), sent as a Player update (`0x2f9`) and recompute the NPCs' states (objects created again). The waypoint activates (town, click, 25 cells; `0x5a`), opens the World panel (`0x98`) and travels (`0x5b` → `0x2f1`, arrival by the waypoint), all live. No shop stock | `ServerObjectPoe2.cs`, `Poe2ServerObjects.cs`, `Poe2Quests.cs`, `InstanceSessionPoe2.Npcs.cs`, `InstanceSessionPoe2.Quests.cs`, `InstanceNpcsPoe2.cs`, `InstanceQuestsPoe2.cs`, `InstanceWaypointsPoe2.cs`, `scripts/re/poe2/server_objects.py`, `quests.py`; wave 27 |
 
-**Tests.** 679/679 pass:
+**Tests.** 683/683 pass:
 
 ```bash
 dotnet test tests/GameServer.Core.Tests -c Release
@@ -75,6 +75,9 @@ dotnet test tests/GameServer.Core.Tests -c Release
   - `scripts/dev/poe2-login-harness/`: the PoE2 login stand-in. It answers the handshake, token login, character
     list and Play, and sends the client to the Gateway on 6112.
   - `scripts/re/frida/poe2-track-player.js`: logs the client's own player cell.
+  - `scripts/re/frida/poe2-trace-weapon-check.js`: logs the client's weapon requirement checks per skill (the hand
+    types it used, the requirement, the verdict). Start it with `--follow` before the client; the client must not be
+    started from an elevated PowerShell, or Frida cannot attach.
   - `scripts/dev/poe2_walk_compare.py`: compares the Gateway's echoes with that log.
 - **Reverse-engineering tools:**
   - `scripts/re/poe2/` (`pe2.py`, `fn.py`, `around.py`, `callers.py`, `bytepat.py`; added with this handoff):
@@ -320,8 +323,8 @@ In rough order. Each is a wave of its own.
 1. **The rest of the character** (waves 16–17 did the name, class, level, life, mana and attributes):
    - why the HUD's mana starts near 32 whatever pool is sent (perhaps the second mana pool at `+0x330`);
    - the accuracy and spirit stat keys; passives and items;
-   - items: saved equipment, and the weapon's own basic attack (wave 26 swings the starting weapon with Default
-     Attack; Mace Strike stays greyed, PORTING-POE2.md wave 26). The character screen's preview is mapped and encoded (wave 18,
+   - items: saved equipment and the weapon swap (wave 26 and its follow-up give the starting weapon, Default Attack and
+     the weapon's own attack, PORTING-POE2.md). The character screen's preview is mapped and encoded (wave 18,
      `CharacterPreviewPoe2`, `LoginServerSession.Poe2Preview`) but has nothing to show yet. The in-game player's
      visible equipment (the Inventories component) is not mapped;
    - the act and premade start states (CharacterStartStates rows 12 on);

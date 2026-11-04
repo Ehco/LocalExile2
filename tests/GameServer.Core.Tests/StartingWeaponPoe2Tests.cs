@@ -96,4 +96,34 @@ public class StartingWeaponPoe2Tests
             [new InventoryItem(entry.Id, 0, 0, Poe2Items.Create(WoodenClub))]);
         Assert.Equal(3, enter.ToList().FindIndex(m => m.SequenceEqual(change)));
     }
+
+    [Fact]
+    public void A_weapon_also_grants_its_own_attack_as_a_weapon_set_one_skill()
+    {
+        var skills = Poe2StartingSkills.For(Warrior, WoodenClub);
+
+        Assert.Equal(3, skills.Count);
+        var mace = skills[2];
+        Assert.Equal((Poe2StartingSkills.WeaponAttackId, 400u, 400u, Poe2StartingSkills.WeaponSetOneSource),
+            (mace.Id, mace.EffectsPerLevelRow, mace.StatSetsPerLevelRow, mace.Source));
+        Assert.Equal(AttackPoe2.Of(skills[0]), AttackPoe2.Of(mace));
+        Assert.Equal(2, Poe2StartingSkills.For(Warrior).Count);
+        // The record's second byte carries the source.
+        var w = new BlobWriter();
+        ActorSkillsPoe2.WriteRecord(w, mace);
+        Assert.Equal("04010000" + "40", Convert.ToHexString(w.ToArray(), 0, 5));
+    }
+
+    [Fact]
+    public void Entering_with_a_weapon_sends_the_actors_weapon_records_after_the_skill_list()
+    {
+        var armed = new InstanceSessionPoe2(new PlayerObjectPoe2(200, 200, 58, Visible: [Poe2Items.Visible(WoodenClub)]), weapon: WoodenClub);
+        var bare = new InstanceSessionPoe2(new PlayerObjectPoe2(200, 200, 58));
+
+        var enter = armed.EnterWorld().ToList();
+
+        int skills = enter.FindIndex(m => m[0] == 0 && m[1] == InstanceProtocolPoe2.SkillListId);
+        Assert.Equal(InstanceSkillsPoe2.WeaponRecords(armed.PlayerId, 13), enter[skills + 1]);
+        Assert.DoesNotContain(bare.EnterWorld(), m => m[0] == 0x03 && m[1] == 0x24);
+    }
 }

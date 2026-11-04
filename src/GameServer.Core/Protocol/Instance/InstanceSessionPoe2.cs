@@ -300,6 +300,9 @@ public sealed partial class InstanceSessionPoe2
         InstanceProtocolPoe2.EnterArea(PlayerId),
         InstanceProtocolPoe2.FrameLength(FrameMs),
         InstanceProtocolPoe2.SkillList([.. SkillIds.Select(id => (id, SlotMask(id)))]),
+        // With a weapon in hand, the Actor's weapon records again (0x324): the client resets them after the creation
+        // blob, which greys the weapon's own attack (wave 28).
+        .. _player.MainHandType != 0 ? new[] { InstanceSkillsPoe2.WeaponRecords(PlayerId, _player.MainHandType) } : [],
         .. _exits.Select((exit, i) => InstanceProtocolPoe2.CreateObject(ExitId(i),
             InstanceEntities.ObjectTypeHash(AreaTransitionObjectPoe2.MetadataPath), exit.Blob())),
         .. MonsterMessages(),

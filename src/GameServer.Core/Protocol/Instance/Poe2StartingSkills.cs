@@ -30,6 +30,16 @@ public static class Poe2StartingSkills
     public const uint DodgeRollEffectsPerLevelRow = 899, DodgeRollStatSetsPerLevelRow = 905;
     public const uint PunchId = ActorSkillsPoe2.FirstSkillId, DodgeRollId = ActorSkillsPoe2.FirstSkillId + 1;
 
+    /// <summary>The weapon's own basic attack (Mace Strike for a mace: the item type's <see cref="Poe2Items.BasicAttack"/>),
+    /// granted beside Default Attack with the same weapon values (wave 28).</summary>
+    public const uint WeaponAttackId = ActorSkillsPoe2.FirstSkillId + 2;
+
+    /// <summary>The skill record's source byte for a skill of weapon set I: bits 7-6 the set (1 = I, 2 = II), bits 5-0 the
+    /// hand record. The client's weapon check (0x141e89b60 / 0x141d82bc0) takes the hand types of that record (the
+    /// Actor's +0x2c8 + 0x28 × record); a skill of set 0 gets the Actor's defaults (+0x924: Unarmed, none), which is
+    /// what greyed the weapon's attack (Frida, 2026-11-04).</summary>
+    public const byte WeaponSetOneSource = 0x40;
+
     public const uint MainHandMinimumPhysicalDamage = 0x10f, MainHandMaximumPhysicalDamage = 0x110;
     public const uint MainHandMinimumTotalDamage = 0x291, MainHandMaximumTotalDamage = 0x292;
     public const uint MainHandBaseWeaponAttackDurationMs = 0x138;
@@ -73,13 +83,16 @@ public static class Poe2StartingSkills
         ];
     }
 
-    /// <summary>The attack (Punch unarmed, Default Attack with a weapon) with the main hand's values, and the dodge roll,
-    /// for the player's Actor.</summary>
+    /// <summary>The attack (Punch unarmed, Default Attack with a weapon) with the main hand's values, the dodge roll, and
+    /// with a weapon its own basic attack (<see cref="WeaponAttackId"/>), for the player's Actor.</summary>
     public static IReadOnlyList<GrantedSkillPoe2> For(Poe2Classes.Row row, Poe2Items.ItemType? weapon = null) =>
     [
         weapon?.Weapon is null
             ? new(PunchId, PunchEffectsPerLevelRow, PunchStatSetsPerLevelRow, MainHandStats(row, weapon))
             : new(PunchId, DefaultAttackEffectsPerLevelRow, DefaultAttackStatSetsPerLevelRow, MainHandStats(row, weapon)),
         new(DodgeRollId, DodgeRollEffectsPerLevelRow, DodgeRollStatSetsPerLevelRow),
+        .. weapon is { Weapon: not null, Attack: { } attack }
+            ? new GrantedSkillPoe2[] { new(WeaponAttackId, attack.EffectsPerLevelRow, attack.StatSetsPerLevelRow, MainHandStats(row, weapon), WeaponSetOneSource) }
+            : [],
     ];
 }

@@ -113,4 +113,13 @@ public class InstanceSkillsPoe2Tests
         Assert.Equal("03010000" + "00" + "00" + "83030000" + "00" + "89030000" + "00" + "00" + new string('0', 24) + "00"
             + "00" + "00", Convert.ToHexString(w.ToArray()));
     }
+
+    [Fact]
+    public void Weapon_records_are_the_header_a_flag_and_three_hand_pairs_with_empty_names()
+    {
+        // S→C 0x324 (reader 0x141f6b3a0): object header, u8, then 3 × (u8 main type, u8 off type, wstr).
+        Assert.Equal("0324" + "00001000" + "00000000" + "00" + "0000" + "00" + "0D77" + "0000" + "0D77" + "0000" + "7777" + "0000",
+            Convert.ToHexString(InstanceSkillsPoe2.WeaponRecords(0x1000, 13)));
+        Assert.Equal((byte)1, InstanceSkillsPoe2.WeaponRecords(0x1000, 13, 0x77, flag: true)[13]);
+    }
 }

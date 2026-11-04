@@ -12,6 +12,30 @@ public static class InstanceSkillsPoe2
 {
     public const ushort UseSkillId = 0x1a5, ActionStartedId = 0x1c8;
 
+    public const ushort WeaponRecordsId = 0x324;
+
+    /// <summary>The hand type of an empty hand: no ItemClasses row (0x141e862c0 refuses it for a weapon requirement).</summary>
+    public const byte NoWeaponType = 0x77;
+
+    /// <summary>
+    /// S→C 0x324 (world group, vtable 0x14350c450, reader 0x141f6b3a0; the Actor's handler 0x1421497c0, case at
+    /// 0x14214b15e): the Actor's three weapon records again, PoE2's "weapons changed". Object header, u8 (passed to the
+    /// Actor's vtable +0x3d0 after the copy), then three records of u8 main hand type, u8 off hand type (ItemClasses row
+    /// + 1, <see cref="NoWeaponType"/> for none) and a wstr (u16 BE unit count + UTF-16), copied to the Actor's +0x2c8,
+    /// +0x2f0 and +0x318 (stride 0x28). The skills' weapon requirements (0x141e859c0) read the first record's types
+    /// (or, with weapon sets, the set's); the client resets them to Unarmed / none after the creation blob
+    /// (live 2026-11-04, Frida: 37 and 0x77 whatever the blob held), so the server sends this after the skills.
+    /// </summary>
+    public static byte[] WeaponRecords(uint objectId, byte mainType, byte offType = NoWeaponType, bool flag = false)
+    {
+        var w = new LoginWriter().U16(WeaponRecordsId).U32(objectId).U32(0).U8(0).U16(0).U8((byte)(flag ? 1 : 0));
+        // The current hands, weapon set I (the same), weapon set II (empty).
+        w.U8(mainType).U8(offType).U16(0);
+        w.U8(mainType).U8(offType).U16(0);
+        w.U8(NoWeaponType).U8(NoWeaponType).U16(0);
+        return w.ToArray();
+    }
+
     /// <summary>The C→S 0x1a5 option bit for a target object id.</summary>
     public const byte TargetOption = 0x08;
 
