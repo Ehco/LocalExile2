@@ -42,12 +42,12 @@ public sealed partial class InstanceSessionPoe2
         int level = Progression.LevelFor(_experience, _levelStarts);
         if (level <= _level) yield break;
         _level = level;
-        var sheet = Poe2CharacterStats.For(Poe2Classes.Rows[Math.Min(_player.ClassRow, Poe2Classes.Rows.Count - 1)], level);
+        var sheet = CurrentSheet();
         (_maximumLife, _maximumMana, _playerLife) = (sheet.MaximumLife, sheet.MaximumMana, sheet.MaximumLife);
-        yield return InstanceCombatPoe2.StatsUpdate(PlayerId,
-            [(Poe2CharacterStats.MaximumLife, sheet.MaximumLife), (Poe2CharacterStats.MaximumMana, sheet.MaximumMana)]);
+        yield return InstanceCombatPoe2.StatsUpdate(PlayerId, sheet.Stats);
         yield return InstanceCombatPoe2.LifeUpdate(PlayerId, _maximumLife);
         yield return InstanceCombatPoe2.LifeUpdate(PlayerId, _maximumMana, InstanceCombatPoe2.ManaPool);
+        yield return PassivesMessage();
         _onLevel?.Invoke(level);
     }
 }

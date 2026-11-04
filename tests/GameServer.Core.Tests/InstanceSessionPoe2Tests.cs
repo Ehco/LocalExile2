@@ -18,7 +18,7 @@ public class InstanceSessionPoe2Tests
         var sent = session.Handle(AreaGenerated, 0);
 
         Assert.True(session.InWorld);
-        Assert.Equal(["0024", "02F7", "00DF", "0023", "02F5", "0066"], sent.Select(m => Convert.ToHexString(m, 0, 2)));
+        Assert.Equal(["0024", "02F7", "00DF", "0023", "02F5", "0066", "003A", "02DB"], sent.Select(m => Convert.ToHexString(m, 0, 2)));
         Assert.Equal(InstanceProtocolPoe2.SetLocalPlayer(InstanceSessionPoe2.DefaultPlayerId), sent[0]);
         Assert.Equal(InstanceProtocolPoe2.EnterArea(InstanceSessionPoe2.DefaultPlayerId), sent[3]);
         Assert.Equal(InstanceProtocolPoe2.FrameLength(InstanceSessionPoe2.FrameMs), sent[4]);

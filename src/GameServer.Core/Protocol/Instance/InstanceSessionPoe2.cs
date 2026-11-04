@@ -31,6 +31,10 @@ public sealed partial class InstanceSessionPoe2
     {
         [0x1c] = 7, [0x5c] = 8, [0x62] = 4, [InstanceCombatPoe2.ResurrectId] = 4, [InstanceProtocolPoe2.AreaGeneratedId] = 11, [0xbc] = 5, [0x13d] = 3,
         [InstanceNpcsPoe2.ChooseTalkId] = 4, [InstanceNpcsPoe2.CloseTalkId] = 3, [InstanceWaypointsPoe2.TravelId] = InstanceWaypointsPoe2.TravelLength,
+        [InstancePassivesPoe2.AllocateId] = InstancePassivesPoe2.AllocateLength, [InstancePassivesPoe2.RefundId] = InstancePassivesPoe2.RefundLength,
+        [InstancePassivesPoe2.RefundAllId] = InstancePassivesPoe2.RefundAllLength, [InstancePassivesPoe2.ChooseId] = InstancePassivesPoe2.ChooseLength,
+        [InstancePassivesPoe2.ChooseAltId] = InstancePassivesPoe2.ChooseLength, [InstancePassivesPoe2.ConfirmId] = InstancePassivesPoe2.ConfirmLength,
+        [InstancePassivesPoe2.ConfirmAltId] = InstancePassivesPoe2.ConfirmLength, [0x16] = 7, [0x137] = 4,
         [0x173] = 3, [0x17a] = 3, [0x1ac] = 3,
         [0x221] = 3, [0x23d] = 4, [InstanceProtocolPoe2.PauseRequestId] = 4, [0x2e6] = 4, [0x357] = 3,
         [InstanceProtocolPoe2.LeavingId] = 3,
@@ -61,6 +65,9 @@ public sealed partial class InstanceSessionPoe2
     /// <param name="quests">The quest tables (<see cref="Poe2Quests"/>); without them flags are kept but not sent and no
     /// waypoint is known.</param>
     /// <param name="area">The area the session serves: its entry flags are set and, in a town, its waypoint activated.</param>
+    /// <param name="passives">The character's allocated passive nodes (<see cref="Poe2Passives.Encode"/>), from its save;
+    /// <paramref name="onPassives"/> gets each new whole list to save; <paramref name="passiveNodes"/> gives their stats
+    /// and the refund's cost, paid from <paramref name="gold"/>, the character's gold (kept for the session).</param>
     public InstanceSessionPoe2(PlayerObjectPoe2 player, string objectType = DefaultObjectType, uint playerId = DefaultPlayerId,
         double walkSpeed = DirectionWalk.DefaultSpeed, Func<int, int, bool>? walkable = null,
         IReadOnlyList<AreaTransitionObjectPoe2>? exits = null, IReadOnlyList<Poe2Monster>? monsters = null,
@@ -68,10 +75,13 @@ public sealed partial class InstanceSessionPoe2
         IReadOnlyDictionary<string, Poe2Items.ItemType>? itemTypes = null, Poe2Items.ItemType? weapon = null,
         IReadOnlyList<ServerObjectPoe2>? serverObjects = null, IEnumerable<string>? questFlags = null,
         IEnumerable<string>? waypoints = null, Poe2Quests? quests = null, Poe2Areas.Area? area = null,
-        Action<IReadOnlyCollection<string>>? onQuestFlags = null, Action<IReadOnlyCollection<string>>? onWaypoints = null)
+        Action<IReadOnlyCollection<string>>? onQuestFlags = null, Action<IReadOnlyCollection<string>>? onWaypoints = null,
+        IEnumerable<int>? passives = null, Action<IReadOnlyCollection<int>>? onPassives = null, ushort questPassivePoints = 0,
+        Poe2Passives? passiveNodes = null, uint gold = 0)
     {
         (_player, _objectType, PlayerId, _exits, _monsters) = (player, objectType, playerId, exits ?? [], monsters ?? []);
         InitQuests(serverObjects, questFlags, waypoints, quests, area, onQuestFlags, onWaypoints);
+        InitPassives(passives, questPassivePoints, passiveNodes, onPassives, gold);
         Walk = new DirectionWalk(player.GridX, player.GridY, walkSpeed, walkable);
         _walkSpeed = walkSpeed;
         _monsterLife = [.. _monsters.Select(m => (int)m.Object.Life)];
@@ -147,6 +157,9 @@ public sealed partial class InstanceSessionPoe2
         if (InWorld && InstanceNpcsPoe2.ReadChooseTalk(message) is byte option) return ChooseTalk(option);
         if (InWorld && InstanceNpcsPoe2.IsCloseTalk(message)) return CloseTalk();
         if (InWorld && InstanceWaypointsPoe2.ReadTravel(message) is { } travel) return Travel(travel);
+        if (InWorld && InstancePassivesPoe2.ReadAllocate(message) is { } allocate) return AllocatePassive(allocate);
+        if (InWorld && InstancePassivesPoe2.ReadRefund(message) is { } refund) return RefundPassive(refund.Node);
+        if (InWorld && InstancePassivesPoe2.IsRefundAll(message)) return RefundAllPassives();
         if (InWorld && InstanceSkillsPoe2.ReadUseSkill(message, out _) is { TargetId: { } item } pick && _groundItems.ContainsKey(item))
             return BeginPickup(item, pick, now);
         if (InWorld && InstanceSkillsPoe2.ReadUseSkill(message, out _) is { TargetId: { } npc } talk && IsUsable(npc))
@@ -288,8 +301,8 @@ public sealed partial class InstanceSessionPoe2
     /// <summary>The local player (0x24), the player object (0x2f7), its inventories (0xdf) and the starting weapon in
     /// them (0xde), enter area (0x23) and the
     /// frame length (0x2f5), in the order the client accepted live, and the skills the skill bar offers (0x66); then the
-    /// area's exits, its monsters after their types (0x21), its NPCs and other server objects, and the character's quest
-    /// flags (0x2f9) and waypoints (0x5a).</summary>
+    /// passive tree (0x3a) and gold (0x2db), the area's exits, its monsters after their types (0x21), its NPCs and other
+    /// server objects, and the character's quest flags (0x2f9) and waypoints (0x5a).</summary>
     public IReadOnlyList<byte[]> EnterWorld() =>
     [
         InstanceProtocolPoe2.SetLocalPlayer(PlayerId),
@@ -303,6 +316,8 @@ public sealed partial class InstanceSessionPoe2
         // With a weapon in hand, the Actor's weapon records again (0x324): the client resets them after the creation
         // blob, which greys the weapon's own attack (wave 28).
         .. _player.MainHandType != 0 ? new[] { InstanceSkillsPoe2.WeaponRecords(PlayerId, _player.MainHandType) } : [],
+        PassivesMessage(),
+        GoldMessage(),
         .. _exits.Select((exit, i) => InstanceProtocolPoe2.CreateObject(ExitId(i),
             InstanceEntities.ObjectTypeHash(AreaTransitionObjectPoe2.MetadataPath), exit.Blob())),
         .. MonsterMessages(),

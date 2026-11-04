@@ -24,7 +24,10 @@ public static class Poe2CharacterStats
     public const int BaseLife = 16, BaseMana = 30, LifePerLevel = 12, ManaPerLevel = 4;
     public const int LifePerStrength = 2, ManaPerIntelligence = 2;
 
-    public sealed record Sheet(int MaximumLife, int MaximumMana, int Strength, int Dexterity, int Intelligence)
+    /// <param name="Extra">The other stats the modifiers add (passives: damage %, armour % ...), summed by client
+    /// key and sent as they are.</param>
+    public sealed record Sheet(int MaximumLife, int MaximumMana, int Strength, int Dexterity, int Intelligence,
+        IReadOnlyList<(uint Key, int Value)>? Extra = null)
     {
         /// <summary>The (key, value) pairs of the player's Stats component.</summary>
         public IReadOnlyList<(uint Key, int Value)> Stats =>
@@ -32,16 +35,40 @@ public static class Poe2CharacterStats
             (Poe2CharacterStats.MaximumLife, MaximumLife), (Poe2CharacterStats.MaximumMana, MaximumMana),
             (Poe2CharacterStats.Strength, Strength), (Poe2CharacterStats.Dexterity, Dexterity),
             (Poe2CharacterStats.Intelligence, Intelligence),
+            .. Extra ?? [],
         ];
     }
 
     /// <summary>The class's sheet at a level; a level below 1 counts as 1.</summary>
-    public static Sheet For(Poe2Classes.Row row, int level)
+    public static Sheet For(Poe2Classes.Row row, int level) => For(row, level, null);
+
+    // The modifier stats the sheet folds into its own numbers (the passive tree's, wave 28); every other goes out raw.
+    const string BaseStrength = "base_strength", BaseDexterity = "base_dexterity", BaseIntelligence = "base_intelligence",
+        AllAttributes = "additional_all_attributes", BaseLifeStat = "base_maximum_life", LifePercent = "maximum_life_+%",
+        BaseManaStat = "base_maximum_mana", ManaPercent = "maximum_mana_+%", AttributeText = "display_passive_attribute_text";
+
+    /// <summary>The class's sheet at a level with <paramref name="modifiers"/> (Stats Id, client key, value) added:
+    /// the attribute flats, the flat and percent life and mana (life = (base + per level + 2 × strength + flats) ×
+    /// (100 + %) / 100, mana likewise with intelligence), and every other stat summed by key in <see cref="Sheet.Extra"/>.</summary>
+    public static Sheet For(Poe2Classes.Row row, int level, IEnumerable<(string Id, uint Key, int Value)>? modifiers)
     {
         level = Math.Max(1, level);
-        return new Sheet(
-            BaseLife + LifePerLevel * level + LifePerStrength * row.Strength,
-            BaseMana + ManaPerLevel * level + ManaPerIntelligence * row.Intelligence,
-            row.Strength, row.Dexterity, row.Intelligence);
+        var sums = new Dictionary<string, int>();
+        var extra = new Dictionary<uint, int>();
+        foreach (var (id, key, value) in modifiers ?? [])
+        {
+            if (id is BaseStrength or BaseDexterity or BaseIntelligence or AllAttributes or BaseLifeStat or LifePercent or BaseManaStat or ManaPercent)
+                sums[id] = sums.GetValueOrDefault(id) + value;
+            else if (id != AttributeText) extra[key] = extra.GetValueOrDefault(key) + value;
+        }
+        int all = sums.GetValueOrDefault(AllAttributes);
+        int strength = row.Strength + sums.GetValueOrDefault(BaseStrength) + all;
+        int dexterity = row.Dexterity + sums.GetValueOrDefault(BaseDexterity) + all;
+        int intelligence = row.Intelligence + sums.GetValueOrDefault(BaseIntelligence) + all;
+        int life = (BaseLife + LifePerLevel * level + LifePerStrength * strength + sums.GetValueOrDefault(BaseLifeStat))
+            * (100 + sums.GetValueOrDefault(LifePercent)) / 100;
+        int mana = (BaseMana + ManaPerLevel * level + ManaPerIntelligence * intelligence + sums.GetValueOrDefault(BaseManaStat))
+            * (100 + sums.GetValueOrDefault(ManaPercent)) / 100;
+        return new Sheet(life, mana, strength, dexterity, intelligence, extra.Count == 0 ? null : [.. extra.Select(e => (e.Key, e.Value))]);
     }
 }

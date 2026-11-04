@@ -1975,3 +1975,114 @@ Limits:
 - Frida cannot attach to a client started from an elevated PowerShell
   ("unable to access process"); start it from a normal one.
 
+
+## Wave 28 — the passive skill tree (2026-11-04)
+
+The tree screen (P) shows the character's allocated nodes, allocates and refunds
+them, and the nodes' stats reach the character sheet. Code:
+`InstancePassivesPoe2.cs` (S→C `0x3a`, C→S `0x3c` / `0x3e` / `0x48`),
+`InstanceSessionPoe2.Passives.cs`, `Poe2Passives.cs` (the nodes and their
+stats), `Poe2CharacterStats.For(row, level, modifiers)`, the Auth op
+`set_passives` (`Character.Passives`), `scripts/re/poe2/passives.py`.
+
+- **Data.** `passives.py` writes `data/poe2/passives.json` from
+  PassiveSkills.datc64: one entry per row with a PassiveSkillGraphId (8783),
+  the id the client allocates and the server lists; its stats as (Stats Id,
+  client key = Stats row + 1, StatNValue), SkillPointsGranted and the
+  IsKeystone / IsNotable / IsAttribute / IsJewelSocket flags. An attribute node
+  ("Attribute", IsAttribute) carries no stat: the client sends the generic
+  node chosen (generic_attribute_strength / dexterity / intelligence, rows
+  300–302, graph ids `0x66b9` / `0x3a4f` / `0xdebe`) and that node's stat
+  counts. The 11 IsMultipleChoice ascendancy nodes and their 36 options are
+  not handled.
+- **S→C `0x3a`** (reader `0x142152800`, class size `0xb8`; the per-player
+  dispatcher case `0x142107efd` hands it to the tree at `0x142108058` →
+  `0x141e9b870`): u8 route; u16 BE quest points (`+0xa8` → tree `+0x2c8`,
+  added to the level's), u16 BE (`+0xaa` → `+0x2d8`), u16 BE weapon set
+  points (`+0xac` → `+0x2cc`, both sets); u8 level (`+0xaf` → `+0x2c4`); u8
+  class (`+0xae` → `+0x2b8`); a flag set (u16 BE count of (u8 block, u64);
+  sent empty); u8 flags (bit 1: no lists follow); then five lists:
+  - `+0x18`, u16 BE n × (u16 BE node, u8 weapon set): the allocated nodes,
+    sorted, diffed against the tree's `+0x1a8` (new nodes go through
+    `0x141ea0a90(tree, record, set)`, dropped ones through `0x141ea0ee0`);
+  - `+0x30` and `+0x48`, u16 BE n × raw u16 (`0x1421749d0`): unused here;
+  - `+0x60`, u16 BE n × raw u32 (node | u16 << 16): copied into the tree's
+    `+0x208` list (not the choices; sent empty);
+  - `+0x78`, **u8** n × raw u32 (node | chosen node << 16, sorted by node):
+    the attribute choices; it replaces the tree's `+0x1d8` list, which
+    `0x141eb1690` searches by node to find a node's chosen record.
+  The points shown are (level − 1) × 1 (`[+0x168]->+0x10`) + `+0x2c8` +
+  the nodes' SkillPointsGranted (`+0x2d0`) − the allocated count
+  (`0x141ea1580`). Live with `Game_POE2_PASSIVE_POINTS=10` at level 5:
+  "Skill Points: 14", "Weapon Set: 40 (40)" with 40 in `+0xac`.
+- **The client's checks** (`0x141e9e100` after every tree message →
+  `0x141e9d510`, predicate `0x141e9dca0` per allocated node): the node must be
+  reachable from the class start in the connectivity bytes built by
+  `0x141ebb3a0` (one byte per node, bit = weapon set), an ascendancy node must
+  match the class, and an attribute node (record `+0x1b3` non-null) must have
+  a chosen record in `+0x1d8` that is one of its options (`0x141eb1120`).
+  Otherwise "Removing N invalid/unconnected passive skills" (log hashes
+  `f4ab7330` / `f4ab733c`) and the node is undone. A click allocates through
+  `0x141e9cc00` with the chosen record ("Successfully allocated passive
+  skill", `f4ab5ad5`), so the server is told only on Apply.
+- **C→S** (sender `0x1409ac830`): `0x3c` allocate, 9 bytes: u8 route, u16 BE
+  node, u8, u16 BE chosen node or 0, u8 (`003C 00 0F60 00 0000 00`, `003C 00
+  3455 00 66B9 00`), one per node of the path, sent on Apply; `0x3e` refund,
+  6 bytes: u8 route, u16 BE node, u8; `0x48` refund all, 3 bytes. `0x46` /
+  `0x47` (`0x360` / `0x361`, 7 and 5 bytes) are built by the same screen and
+  not mapped. The client checks the connection itself; the server checks the
+  points, keeps the node with its choice and sends the whole tree again (the
+  client undoes a click the tree comes back without). A node the server
+  already has costs no point when asked for again (the client re-sends what it
+  had dropped).
+- **Stats.** `Poe2CharacterStats.For(row, level, modifiers)` folds
+  base_strength / dexterity / intelligence, additional_all_attributes,
+  base_maximum_life, maximum_life_+%, base_maximum_mana and maximum_mana_+%
+  into the sheet (life = (16 + 12 × level + 2 × strength + flats) ×
+  (100 + %) / 100, mana likewise with intelligence) and sends every other stat
+  summed by key in the player's Stats update (`0x1d3`); the maximums move,
+  the pools are not refilled.
+- **Saving.** The allocations (node | choice << 16) go to Auth with
+  `set_passives` at every change and come back in the ticket; the sheet on
+  entering counts them.
+- **Gold and the refund.** A refund costs gold: `Data/Balance/GoldRespecPrices.dat`
+  (100 rows, level → cost: 15 at level 1, 19, 25, 31, 39 ... 10 129 at 100;
+  `passives.py` writes it to `data/poe2/gold-respec-prices.json`). The
+  character's gold is **S→C `0x2db`** (reader `0x14086d300`, class `0x20`;
+  dispatcher `0x1420ee490`, case `0x1420f14b6`): u8 route, u32 BE amount,
+  stored at `+0x39d0` of the player state (`[[state+0x1b0]+0x39d0]`, what the
+  script function `GEAL::GetCurrentGoldAmount`, `0x14190a830`, returns; the
+  inventory panel shows it). The tree's Apply bar (`0x140a12880`) shows the
+  pending refunds' total against it, and the request builder `0x1409ad790` →
+  `0x1409e3500(out, state, node, panel, flag)` (u32 cost, u8 affordable)
+  queues a refund only while the gold covers it. The Gateway sends `0x2db`
+  after the tree on entering (`Game_POE2_GOLD`, the same at each entry, not
+  saved) and again after each refund; a refund (`0x3e`) or refund all (`0x48`)
+  costs the level's price per node and is refused whole (tree and gold sent
+  back unchanged) when the gold is short.
+
+**Live test (2026-11-04).** Normal nodes allocate, stay allocated after Apply,
+are saved and reloaded, and the character sheet moves (Melee Damage, Armour,
+Life Regeneration); an Attribute node chosen as Strength gives +5 Strength
+and +10 life. Before the lists were told apart: nodes in `+0x30` stayed
+unallocated; choices in `+0x60` left every attribute node "invalid" and the
+nodes behind it unconnected. The gold shows (500 in the inventory, parsed by
+`0x14086d300` per Frida), but **a click on an allocated node still does
+nothing**: traced with `scripts/re/frida/poe2-trace-refund.js`, neither the
+model's can-unallocate (`0x141eb0cb0(tree, node, budget, flag)`, vtable slot
+after `0x141e9cf50` unallocate at `0x1434dcf98`) nor the cost `0x1409e3500`
+nor the queue `0x1409b5e50` is called: the screen rejects the click before the
+model. Only the Apply bar's refresh `0x140a12880` ran (from `0x140a1b0d0`).
+Open: what the screen checks first (a tree mode as PoE1's respec mode at an
+NPC, a flag in the `0x3a` flag set, or the `+0xaa` refund points); a node
+allocated and undone in the same Apply batch does unallocate client-side
+("Successfully unallocated", hash `f4ab5b1d`, no message).
+
+Limits:
+- Quest passive points are a Gateway knob (`Game_POE2_PASSIVE_POINTS`, added to
+  every character); PoE2's quest rewards (+2 per quest) are not granted.
+- The refund is implemented server-side but not reachable from the client yet
+  (above). The refund points field (`+0xaa`) is sent as 0, the weapon set
+  points as 0 and the per-node weapon set byte as 0.
+- Jewel sockets, ascendancies, the IsMultipleChoice nodes and PoE2's
+  "allocated by a jewel" stats are out.

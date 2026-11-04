@@ -77,7 +77,7 @@ public class NpcSessionPoe2Tests
 
         var sent = session.Handle(AreaGenerated, 0);
 
-        Assert.Equal(["0024", "02F7", "00DF", "0023", "02F5", "0066", "02F7", "02F7", "02F9", "005A"], Ids(sent));
+        Assert.Equal(["0024", "02F7", "00DF", "0023", "02F5", "0066", "003A", "02DB", "02F7", "02F7", "02F9", "005A"], Ids(sent));
         Assert.Equal(InstanceQuestsPoe2.PlayerQuestFlags(session.PlayerId, [0, 7, 8]), sent[^2]);
         Assert.Equal(InstanceWaypointsPoe2.Waypoints([0]), sent[^1]);
         Assert.Equal(["MillerDefeated", "Visited-G1_1", "Visited-G1_town"], saved.Flags!.Order());
@@ -111,7 +111,7 @@ public class NpcSessionPoe2Tests
         session.Tick(1);
         var picked = session.Handle(Option(0), 1);
 
-        Assert.Equal(["0024", "02F7", "00DF", "0023", "02F5", "0066", "02F7"], Ids(sent));
+        Assert.Equal(["0024", "02F7", "00DF", "0023", "02F5", "0066", "003A", "02DB", "02F7"], Ids(sent));
         Assert.Equal([InstanceNpcsPoe2.Talk(0x1001, 0)], picked);
         Assert.Contains("UnaIntroduced", session.QuestFlags);
         Assert.Equal(["UnaIntroduced"], saved.Flags);

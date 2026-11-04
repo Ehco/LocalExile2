@@ -119,10 +119,10 @@ public class MonsterPoe2Tests
 
         var sent = session.EnterWorld();
 
-        Assert.Equal(["0021", "02F7", "02F7"], sent.Skip(7).Select(m => Convert.ToHexString(m, 0, 2)));
-        Assert.Equal(InstanceProtocolPoe2.MonsterTypes([(1736, 2)]), sent[7]);
+        Assert.Equal(["0021", "02F7", "02F7"], sent.Skip(9).Select(m => Convert.ToHexString(m, 0, 2)));
+        Assert.Equal(InstanceProtocolPoe2.MonsterTypes([(1736, 2)]), sent[9]);
         Assert.Equal(InstanceProtocolPoe2.CreateObject(session.MonsterId(1),
-            InstanceEntities.ObjectTypeHash(Unarmed + "@2"), zombie.Object.Blob()), sent[9]);
+            InstanceEntities.ObjectTypeHash(Unarmed + "@2"), zombie.Object.Blob()), sent[11]);
         Assert.Equal(session.ExitId(0) + 2, session.MonsterId(1));
     }
 

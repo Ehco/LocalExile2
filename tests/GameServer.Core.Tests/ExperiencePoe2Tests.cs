@@ -61,9 +61,10 @@ public class ExperiencePoe2Tests
 
         // Level 2 Warrior: 16 + 12 × 2 + 2 × 15 strength life, 30 + 4 × 2 + 2 × 7 intelligence mana.
         Assert.Equal([InstanceProgressionPoe2.PlayerExperience(Player, 37),
-            InstanceCombatPoe2.StatsUpdate(Player, [(Poe2CharacterStats.MaximumLife, 70), (Poe2CharacterStats.MaximumMana, 52)]),
+            InstanceCombatPoe2.StatsUpdate(Player, Poe2CharacterStats.For(Poe2Classes.Of(CharacterClass.Warrior), 2).Stats),
             InstanceCombatPoe2.LifeUpdate(Player, 70), InstanceCombatPoe2.LifeUpdate(Player, 52, InstanceCombatPoe2.ManaPool)],
-            kill.TakeLast(4));
+            kill.TakeLast(5).Take(4));
+        Assert.Equal("003A", Convert.ToHexString(kill[^1], 0, 2));   // the passive tree with the new level (wave 28)
         Assert.Equal(2, session.Level);
         Assert.Equal(70, session.PlayerLife);
         Assert.Equal([2], levels);

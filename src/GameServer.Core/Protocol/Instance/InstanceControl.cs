@@ -50,7 +50,8 @@ public static class InstanceControl
 /// "set_level" (Ticket, Level) → the ticket's character gets that level (1 to 100) in the account store;
 /// "set_portrait" (Ticket, Portrait) → the ticket's character's worn portrait, which the character list shows;
 /// "set_quest_flags" (Ticket, Flags) → the ticket's PoE2 character's whole quest flag list (QuestFlags Ids);
-/// "set_waypoints" (Ticket, Flags) → its whole list of activated waypoints (WorldAreas Ids). "resolve" returns both.
+/// "set_waypoints" (Ticket, Flags) → its whole list of activated waypoints (WorldAreas Ids);
+/// "set_passives" (Ticket, Values) → its whole list of allocated passive nodes. "resolve" returns all three.
 /// </summary>
 public sealed record ControlRequest
 {
@@ -64,6 +65,8 @@ public sealed record ControlRequest
     public ushort Portrait { get; init; }
     /// <summary>"set_quest_flags" / "set_waypoints": the whole new list.</summary>
     public List<string>? Flags { get; init; }
+    /// <summary>"set_passives": the whole new list of PassiveSkillGraphIds.</summary>
+    public List<int>? Values { get; init; }
 }
 
 public sealed record ControlResponse
@@ -99,6 +102,7 @@ public sealed record ControlResponse
     /// <summary>"resolve": a PoE2 character's quest flags (QuestFlags Ids) and activated waypoints (WorldAreas Ids).</summary>
     public List<string>? QuestFlags { get; init; }
     public List<string>? Waypoints { get; init; }
+    public List<int>? Passives { get; init; }
 }
 
 public sealed record ControlInstance(ulong Id, long CreatedUnix, int SecondsLeft, List<string> Players);

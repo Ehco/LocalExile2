@@ -161,6 +161,7 @@ sealed class InstanceDirectory(InstanceRegistry registry, AccountService? accoun
                     LastTown = character?.LastTown is { } last
                         && _towns.FirstOrDefault(t => t.Id == last) is { Id: not null } known ? known.Hash16 : (ushort)0,
                     QuestFlags = [.. character?.QuestFlags ?? []], Waypoints = [.. character?.Waypoints ?? []],
+                    Passives = [.. character?.Passives ?? []],
                 };
             }
             case "list":
@@ -207,6 +208,14 @@ sealed class InstanceDirectory(InstanceRegistry registry, AccountService? accoun
                 var r = accounts.SetPortrait(info.Character, req.Portrait);
                 if (!r.Ok) return new ControlResponse { Ok = false, Error = r.Error.ToString() };
                 Console.WriteLine($"[auth] {info.Character}: portrait {req.Portrait}");
+                return new ControlResponse { Ok = true, Character = info.Character };
+            }
+            case "set_passives":
+            {
+                if (accounts is null) return new ControlResponse { Ok = false, Error = "no account store" };
+                var r = accounts.SetPassives(info.Character, req.Values ?? []);
+                if (!r.Ok) return new ControlResponse { Ok = false, Error = r.Error.ToString() };
+                Console.WriteLine($"[auth] {info.Character}: passives {(req.Values ?? []).Count}");
                 return new ControlResponse { Ok = true, Character = info.Character };
             }
             case "set_quest_flags":

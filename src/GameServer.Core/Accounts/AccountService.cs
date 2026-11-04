@@ -224,6 +224,19 @@ public sealed class AccountService(IAccountStore store, TimeProvider? clock = nu
         }
     }
 
+    /// <summary>Replaces a PoE2 character's allocated passive nodes (PassiveSkillGraphIds), found by name.</summary>
+    public Result<Character> SetPassives(string characterName, IReadOnlyList<int> nodes)
+    {
+        lock (_gate)
+        {
+            var c = store.FindCharacter(characterName);
+            if (c is null) return Result<Character>.Fail(AuthError.NotFound);
+            var u = c with { Passives = [.. nodes.Distinct().Order()] };
+            store.UpdateCharacter(u);
+            return Result<Character>.Success(u);
+        }
+    }
+
     /// <summary>Records the character's worn portrait variation (0 = the class's own), found by name.</summary>
     public Result<Character> SetPortrait(string characterName, ushort portrait)
     {

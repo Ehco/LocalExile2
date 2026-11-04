@@ -18,7 +18,7 @@ partial class Program
     // What the Gateway enters a PoE2 client with: Auth's area and character for the ticket, with the character's quest
     // flags (QuestFlags Ids) and activated waypoints (WorldAreas Ids).
     sealed record Poe2Ticket(ushort Area, uint Seed, ulong Instance, string Character, CharacterClass Class, int Level,
-        IReadOnlyList<string> QuestFlags, IReadOnlyList<string> Waypoints);
+        IReadOnlyList<string> QuestFlags, IReadOnlyList<string> Waypoints, IReadOnlyList<int> Passives);
 
     // Game_POE2_TRACE=1 logs every decrypted client chunk (its first 48 bytes), to map new C→S messages.
     static readonly bool Poe2Trace = Environment.GetEnvironmentVariable("Game_POE2_TRACE") == "1";
@@ -111,7 +111,9 @@ partial class Program
 
                 var row = Poe2Classes.Of(ticket.Class);
                 // The client derives no life or mana from the attributes: the final values go in the Stats, full pools.
-                var sheet = Poe2CharacterStats.For(row, ticket.Level);
+                var sheet = Poe2CharacterStats.For(row, ticket.Level, Poe2PassiveNodes.Value.Modifiers(ticket.Passives.Select(Poe2Passives.Decode)));
+                if (Poe2PassiveNodes.Value.Count == 0)
+                    Console.WriteLine($"[gateway] {remote} no {Poe2Passives.DefaultPath}: passives grant nothing (scripts/re/poe2/passives.py)");
                 Console.WriteLine($"[gateway] {remote} {ticket.Character}: level {ticket.Level} {ticket.Class} ({row.ObjectType}), "
                     + $"life {sheet.MaximumLife}, mana {sheet.MaximumMana}");
                 // The level start (ExperienceLevels: PoE2 0.5.5e's matches PoE1's) needs data/tables/ExperienceLevels.json;
@@ -141,7 +143,9 @@ partial class Program
                     itemTypes: Poe2ItemTypes.Value, weapon: weapon, serverObjects: serverObjects,
                     questFlags: ticket.QuestFlags, waypoints: ticket.Waypoints, quests: Poe2QuestTables.Value, area: Poe2Areas.ByHash(area),
                     onQuestFlags: flags => _ = SavePoe2List(remote, opening.Ticket, "set_quest_flags", flags),
-                    onWaypoints: list => _ = SavePoe2List(remote, opening.Ticket, "set_waypoints", list));
+                    onWaypoints: list => _ = SavePoe2List(remote, opening.Ticket, "set_waypoints", list),
+                    passives: ticket.Passives, onPassives: nodes => _ = SavePoe2Passives(remote, opening.Ticket, nodes),
+                    questPassivePoints: Poe2QuestPassivePoints, passiveNodes: Poe2PassiveNodes.Value, gold: Poe2StartingGold);
                 var clock = Stopwatch.StartNew();
                 double? leavingSince = null;
                 bool transferred = false;
@@ -207,10 +211,10 @@ partial class Program
             return new(resolved.Area, resolved.Seed == 0 ? 1 : resolved.Seed, resolved.Instance,
                 string.IsNullOrEmpty(resolved.Character) ? "Exile" : resolved.Character,
                 Enum.IsDefined((CharacterClass)resolved.Class) ? (CharacterClass)resolved.Class : CharacterClass.Witch,
-                Math.Clamp(resolved.Level, 1, 100), resolved.QuestFlags ?? [], resolved.Waypoints ?? []);
+                Math.Clamp(resolved.Level, 1, 100), resolved.QuestFlags ?? [], resolved.Waypoints ?? [], resolved.Passives ?? []);
         Console.WriteLine($"[gateway] {remote} ticket 0x{ticket:x8} not resolved ({resolved.Error ?? "unknown area"}); " +
                           "Clearfell Encampment, seed 1, instance 1");
-        return new(Poe2FallbackArea, 1, 1, "Exile", CharacterClass.Witch, 1, [], []);
+        return new(Poe2FallbackArea, 1, 1, "Exile", CharacterClass.Witch, 1, [], [], []);
     }
 
     // The character's whole quest flag list ("set_quest_flags") or waypoint list ("set_waypoints") goes to Auth's account
@@ -224,6 +228,24 @@ partial class Program
     }
 
     static readonly Lazy<Poe2Quests> Poe2QuestTables = new(() => Poe2Quests.Load());
+
+    // Passive points beside the levels' (PoE2's quest rewards, not implemented): env Game_POE2_PASSIVE_POINTS, for tests.
+    static readonly Lazy<Poe2Passives> Poe2PassiveNodes = new(() => Poe2Passives.Load());
+
+    static readonly ushort Poe2QuestPassivePoints =
+        ushort.TryParse(Environment.GetEnvironmentVariable("Game_POE2_PASSIVE_POINTS"), out var points) ? points : (ushort)0;
+
+    // The character's gold at each entry (PoE2's gold drops are not implemented; gold is not saved): env Game_POE2_GOLD.
+    // A passive refund costs GoldRespecPrices' gold at the level.
+    static readonly uint Poe2StartingGold =
+        uint.TryParse(Environment.GetEnvironmentVariable("Game_POE2_GOLD"), out var gold) ? gold : 0;
+
+    // The character's whole list of allocated passive nodes goes to Auth ("set_passives") at each change (wave 28).
+    static async Task SavePoe2Passives(string remote, uint ticket, IReadOnlyCollection<int> nodes)
+    {
+        var saved = await InstanceControl.CallAsync(new ControlRequest { Op = "set_passives", Ticket = ticket, Values = [.. nodes] });
+        Console.WriteLine(saved.Ok ? $"[gateway] {remote} {nodes.Count} passives saved" : $"[gateway] {remote} passives not saved: {saved.Error ?? "no answer"}");
+    }
 
     // A kill's new level goes to Auth's account store (and the next tickets): the character comes back at that level's
     // start. The experience into the level is not saved.
@@ -412,6 +434,7 @@ partial class Program
         InstanceNpcsPoe2.ShopWindowId => "0xaf buy window",
         InstanceWaypointsPoe2.WaypointsId => $"0x5a waypoints {Convert.ToHexString(message, 7, InstanceWaypointsPoe2.BitsetLength)}",
         InstanceWaypointsPoe2.OpenUiId => $"0x98 open ui kind {message[3]}",
+        InstancePassivesPoe2.CharacterPassivesId => $"0x3a passive tree level {message[9]} class {message[10]} ({message.Length} B)",
         var id => $"0x{id:x}",
     };
 }
