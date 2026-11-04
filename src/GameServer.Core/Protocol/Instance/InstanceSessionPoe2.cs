@@ -29,8 +29,9 @@ public sealed class InstanceSessionPoe2
     // the split, as the stream has no length prefix.
     static readonly Dictionary<ushort, int> FixedLengths = new()
     {
-        [0x1c] = 7, [0x5c] = 8, [0x62] = 4, [InstanceProtocolPoe2.AreaGeneratedId] = 11,
-        [0x17a] = 3, [0x221] = 3, [0x23d] = 4, [InstanceProtocolPoe2.PauseRequestId] = 4, [0x2e6] = 4, [0x357] = 3,
+        [0x1c] = 7, [0x5c] = 8, [0x62] = 4, [InstanceProtocolPoe2.AreaGeneratedId] = 11, [0xbc] = 5, [0x13d] = 3,
+        [0x173] = 3, [0x17a] = 3, [0x1ac] = 3,
+        [0x221] = 3, [0x23d] = 4, [InstanceProtocolPoe2.PauseRequestId] = 4, [0x2e6] = 4, [0x357] = 3,
         [InstanceProtocolPoe2.LeavingId] = 3,
     };
 
@@ -99,8 +100,35 @@ public sealed class InstanceSessionPoe2
             var (x, y) = Walk.Turn(move.Dx, move.Dy, now);
             return [InstanceMovementPoe2.DirectionMoveEcho(PlayerId, move.Dx, move.Dy, x, y, move.Flag != 0)];
         }
+        if (InWorld && InstanceProtocolPoe2.ReadSetSkillSlot(message) is { } bind) return BindSlot(bind.Slot, bind.SkillId);
+        if (InWorld && InstanceSkillsPoe2.ReadUseSkill(message, out _) is { TargetId: { } target } use && SkillIds.Contains(use.SkillId))
+        {
+            // An attack on an object waits for the server, as in PoE1: start it from where the player is; the action
+            // walks into range itself.
+            var (x, y) = Walk.Cell(now);
+            return [InstanceSkillsPoe2.ActionStarted(PlayerId, x, y, use.X, use.Y, use.SkillId, use.Flags, target)];
+        }
         return [];
     }
+
+    // Skill bar: slot → skill id, as the client set it (C→S 0x5c).
+    private readonly Dictionary<byte, uint> _slots = [];
+
+    /// <summary>The slots holding each skill, as the skill list's mask.</summary>
+    private ulong SlotMask(uint skillId) =>
+        _slots.Where(s => s.Value == skillId).Aggregate(0UL, (mask, s) => mask | 1UL << s.Key);
+
+    private IReadOnlyList<byte[]> BindSlot(byte slot, uint skillId)
+    {
+        if (slot >= InstanceProtocolPoe2.SkillBarSlots) return [];
+        var changed = new List<uint>();
+        if (_slots.TryGetValue(slot, out uint old)) { _slots.Remove(slot); changed.Add(old); }
+        if (skillId != 0 && SkillIds.Contains(skillId)) { _slots[slot] = skillId; changed.Add(skillId); }
+        return changed.Count == 0 ? [] :
+            [InstanceProtocolPoe2.SkillList([.. changed.Distinct().Select(id => (id, SlotMask(id)))], merge: true)];
+    }
+
+    private IEnumerable<uint> SkillIds => (_player.Skills ?? []).Select(s => s.Id);
 
     /// <summary>The server's per-frame work at <paramref name="now"/>: the change area (0x2f1) when the walk reaches an
     /// exit. Empty otherwise, and after the player has left.</summary>
@@ -119,8 +147,8 @@ public sealed class InstanceSessionPoe2
     }
 
     /// <summary>The local player (0x24), the player object (0x2f7), its inventories (0xdf), enter area (0x23) and the
-    /// frame length (0x2f5), in the order the client accepted live; then the area's exits, and its monsters after their
-    /// types (0x21).</summary>
+    /// frame length (0x2f5), in the order the client accepted live, and the skills the skill bar offers (0x66); then the
+    /// area's exits, and its monsters after their types (0x21).</summary>
     public IReadOnlyList<byte[]> EnterWorld() =>
     [
         InstanceProtocolPoe2.SetLocalPlayer(PlayerId),
@@ -129,6 +157,7 @@ public sealed class InstanceSessionPoe2
             InstanceInventoriesPoe2.AddInventory(InstanceInventoriesPoe2.InventoryId(slot.Row), slot))],
         InstanceProtocolPoe2.EnterArea(PlayerId),
         InstanceProtocolPoe2.FrameLength(FrameMs),
+        InstanceProtocolPoe2.SkillList([.. SkillIds.Select(id => (id, SlotMask(id)))]),
         .. _exits.Select((exit, i) => InstanceProtocolPoe2.CreateObject(ExitId(i),
             InstanceEntities.ObjectTypeHash(AreaTransitionObjectPoe2.MetadataPath), exit.Blob())),
         .. MonsterMessages(),
@@ -150,7 +179,8 @@ public sealed class InstanceSessionPoe2
     public uint MonsterId(int i) => ExitId(_exits.Count) + (uint)i;
 
     /// <summary>Whether <see cref="Split"/> knows the length of messages with this id.</summary>
-    public static bool CanFrame(ushort id) => FixedLengths.ContainsKey(id) || id == InstanceMovementPoe2.DirectionMoveId;
+    public static bool CanFrame(ushort id) =>
+        FixedLengths.ContainsKey(id) || id == InstanceMovementPoe2.DirectionMoveId || id == InstanceSkillsPoe2.UseSkillId;
 
     /// <summary>
     /// Splits decrypted client bytes into messages: the fixed-length ids above and 0x63. Stops at the first other id
@@ -167,6 +197,7 @@ public sealed class InstanceSessionPoe2
             int length;
             if (FixedLengths.TryGetValue(id, out int fixedLength)) length = fixedLength <= tail.Length ? fixedLength : 0;
             else if (id == InstanceMovementPoe2.DirectionMoveId) InstanceMovementPoe2.ReadDirectionMove(tail, out length);
+            else if (id == InstanceSkillsPoe2.UseSkillId) InstanceSkillsPoe2.ReadUseSkill(tail, out length);
             else length = 0;
             if (length == 0) break;
             messages.Add(tail[..length].ToArray());

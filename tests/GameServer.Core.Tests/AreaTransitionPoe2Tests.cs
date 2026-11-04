@@ -76,9 +76,9 @@ public class AreaTransitionPoe2Tests
 
         var sent = session.Handle(AreaGenerated, 0);
 
-        Assert.Equal(7, sent.Count);
+        Assert.Equal(8, sent.Count);
         Assert.Equal(InstanceProtocolPoe2.CreateObject(session.ExitId(0),
-            InstanceEntities.ObjectTypeHash(AreaTransitionObjectPoe2.MetadataPath), new AreaTransitionObjectPoe2(220, 200, Clearfell).Blob()), sent[5]);
+            InstanceEntities.ObjectTypeHash(AreaTransitionObjectPoe2.MetadataPath), new AreaTransitionObjectPoe2(220, 200, Clearfell).Blob()), sent[6]);
         Assert.Equal(session.PlayerId + 2, session.ExitId(1));
     }
 

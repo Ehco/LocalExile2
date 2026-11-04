@@ -11,14 +11,14 @@ public class InstanceSessionPoe2Tests
         new(new PlayerObjectPoe2(GridX: 200, GridY: 200, Life: 100, Mana: 30), walkSpeed: speed);
 
     [Fact]
-    public void Area_generated_sends_the_player_its_inventories_enter_area_and_the_frame_length_once()
+    public void Area_generated_sends_the_player_its_inventories_enter_area_the_frame_length_and_skills_once()
     {
         var session = NewSession();
 
         var sent = session.Handle(AreaGenerated, 0);
 
         Assert.True(session.InWorld);
-        Assert.Equal(["0024", "02F7", "00DF", "0023", "02F5"], sent.Select(m => Convert.ToHexString(m, 0, 2)));
+        Assert.Equal(["0024", "02F7", "00DF", "0023", "02F5", "0066"], sent.Select(m => Convert.ToHexString(m, 0, 2)));
         Assert.Equal(InstanceProtocolPoe2.SetLocalPlayer(InstanceSessionPoe2.DefaultPlayerId), sent[0]);
         Assert.Equal(InstanceProtocolPoe2.EnterArea(InstanceSessionPoe2.DefaultPlayerId), sent[3]);
         Assert.Equal(InstanceProtocolPoe2.FrameLength(InstanceSessionPoe2.FrameMs), sent[4]);

@@ -13,10 +13,12 @@ namespace GameServer.Core.Protocol.Instance;
 /// <param name="Experience">The client derives the level from it (0x141dd1360 → +0x204), as PoE1 does.</param>
 /// <param name="Stats">Final stat values by client key (<see cref="Poe2CharacterStats"/>): the character panel and the
 /// HUD's maximums show them.</param>
+/// <param name="Skills">The Actor's granted skills (<see cref="ActorSkillsPoe2"/>): the skill bar offers them.</param>
 public sealed record PlayerObjectPoe2(int GridX, int GridY, uint Life, uint EnergyShield = 0, uint Mana = 0,
-    string Name = "", byte ClassRow = 1, uint Experience = 0, IReadOnlyList<(uint Key, int Value)>? Stats = null)
+    string Name = "", byte ClassRow = 1, uint Experience = 0, IReadOnlyList<(uint Key, int Value)>? Stats = null,
+    IReadOnlyList<GrantedSkillPoe2>? Skills = null)
 {
-    /// <summary>The blob's length with an empty name; each name character adds two bytes.</summary>
+    /// <summary>The blob's length with an empty name and no skills; each name character adds two bytes.</summary>
     public const int BlobLength = 242;
 
     /// <summary>Where the Player component starts in the blob.</summary>
@@ -50,7 +52,11 @@ public sealed record PlayerObjectPoe2(int GridX, int GridY, uint Life, uint Ener
         w.WStr32(Name).U8(ClassRow).U32(Experience);
         w.Zeros(30);
         w.U8(0).U8(0);      // Inventories (0x1416e6d70)
-        w.Zeros(40);        // Actor (0x1416d8210): 40 bytes while alive (48 at zero life)
+        // Actor (0x1416d8210 → body 0x142147300): three (u8, u8, WStr32) entries, then 0x142149510's flags byte f0 and,
+        // on create, the skill list; 40 bytes in all with no skills while alive (48 at zero life).
+        w.Zeros(18).U8(0);
+        ActorSkillsPoe2.WriteList(w, Skills ?? []);
+        w.Zeros(14);
         w.U8(0);            // tasks (0x141e7dd60)
         return w.ToArray();
     }

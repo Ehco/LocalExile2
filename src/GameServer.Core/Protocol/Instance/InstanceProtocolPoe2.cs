@@ -34,6 +34,41 @@ public static class InstanceProtocolPoe2
     public static byte[] PauseState(bool paused) =>
         new LoginWriter().U16(PauseStateId).U32(0).U32(0).U8(0).U16(0).U8(paused ? (byte)0x03 : (byte)0x00).ToArray();
 
+    public const ushort SkillListId = 0x66;
+
+    /// <summary>
+    /// S→C 0x66 (read 0x142153f60; game state case 0x142106d28): the skills the player can put on the skill bar. The
+    /// client keeps them, sorted by id, at game +0x7640 +0x140 as 0x44-byte entries; the skill picker (SkillsList
+    /// 0x140c6b060 → 0x142139640) offers each entry whose id is a skill of the player's Actor
+    /// (<see cref="ActorSkillsPoe2"/>), so a granted skill is not selectable without it. u8 route, u8 merge (0 = replace
+    /// the list, 0x1421386c0; else update entries, 0x142138af0), u8 count, then per entry: u32 skill id (big-endian),
+    /// u8 (+4), 5 bytes (+5: the skill bar slots holding the skill, bit n = slot n, as the client's own bind 0x142138c90
+    /// sets them), u8 a [u8 if a] (+0x3e), u8 b [u8 if b] (+0x40), u8 (+0xa), 3 bytes (+0xb; the client toggles them
+    /// through C→S 0x67), 24 bytes (+0x26), 24 bytes (+0xe). The rest is written as 0.
+    /// </summary>
+    public static byte[] SkillList(IReadOnlyList<(uint Id, ulong Slots)> skills, bool merge = false)
+    {
+        var w = new LoginWriter().U16(SkillListId).U8(0).U8(merge ? (byte)1 : (byte)0).U8(checked((byte)skills.Count));
+        foreach (var (id, slots) in skills)
+        {
+            w.U32(id).U8(0);
+            for (int i = 0; i < SkillBarSlotBytes; i++) w.U8((byte)(slots >> (8 * i)));
+            w.U8(0).U8(0).U8(0).Bytes(new byte[3]).Bytes(new byte[24]).Bytes(new byte[24]);
+        }
+        return w.ToArray();
+    }
+
+    /// <summary>The skill entry's slot mask is 5 bytes: 40 skill bar slots.</summary>
+    public const int SkillBarSlotBytes = 5, SkillBarSlots = 8 * SkillBarSlotBytes;
+
+    public const ushort SetSkillSlotId = 0x5c;
+
+    /// <summary>C→S 0x5c (8 bytes, sent by 0x142112ea4 after the client bound the slot itself): PoE1's 0x4e with a u32
+    /// id. u8 route, u8 slot, u32 skill id (big-endian; 0 clears the slot). Slot 0 is the left mouse button.</summary>
+    public static (byte Slot, uint SkillId)? ReadSetSkillSlot(ReadOnlySpan<byte> m) =>
+        m.Length >= 8 && BinaryPrimitives.ReadUInt16BigEndian(m) == SetSkillSlotId
+            ? (m[3], BinaryPrimitives.ReadUInt32BigEndian(m[4..])) : null;
+
     /// <summary>S→C 0x21 (read 0x14215aac0, write 0x14215a9e0): PoE1's 0x20 with the route byte. u16 count and u16
     /// preload (big-endian), then count × raw u16 MonsterVarieties row and count × u8 level; the client registers
     /// "&lt;variety Id&gt;@&lt;level&gt;" per pair (<see cref="MonsterObjectPoe2.TypePath"/>).</summary>

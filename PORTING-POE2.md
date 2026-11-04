@@ -1334,3 +1334,76 @@ Limits:
   damage, level scaling) are not read.
 - Only varieties made of the base components, Transitionable and StateMachine
   are written. Two varieties are in the captures so far.
+
+## Wave 21 — skills, the skill bar and a targeted attack (2026-11-04)
+
+The player has Punch and the dodge roll. Punch shows in the skill picker, can be
+put on a slot of the skill bar, and a left click on a monster with it makes the
+player walk to the monster and punch. Nothing is hit yet (wave 22).
+
+- **The Actor's skill list** (`ActorSkillsPoe2`, `SkillsPoe2.cs`). The Actor
+  body (`0x142147300`) reads it on create through `0x142149510`, right after its
+  flags byte. A record (`0x142188d50`) is:
+  - u32 skill id, u8 stats source (0 = the Actor's stats);
+  - a GrantedEffectsPerLevel reference (u8, u32 row) and a
+    GrantedEffectStatSetsPerLevel reference (u8, u32 row);
+  - u8 flags, u8 supports, u32 × 3, u8;
+  - a compact stats list (the skill's own stats), u8.
+
+  The list ends with three empty lists (PoE1's soul budgets, a new u8 list,
+  cooldowns). Skill ids share the manager with the type's basic actions
+  (ActionTypes HASH16 & 0x3fff), so the server's start at `0x102`.
+- **The starting skills** (`Poe2StartingSkills`, read with the new
+  `scripts/re/poe2/dat.py`):
+  - Punch: GrantedEffects MeleeUnarmedPlayer, GEPL and GESSPL row 40. Its stats
+    are the class's unarmed weapon (Characters WeaponSpeed 606 ms, MinDamage 2,
+    MaxDamage 5/6/8, MaxAttackDistance), sent as final values in the player's
+    stats and the skill's;
+  - the dodge roll: Characters StartingSkill, GEPL 899, GESSPL 905.
+- **The skill picker's list: S→C `0x66`** (reader `0x142153f60`, game-state
+  case `0x142106d28`). Without it the picker is empty whatever the Actor has.
+  - u8 route, u8 merge (0 replaces the list `0x1421386c0`; else updates
+    `0x142138af0`), u8 count;
+  - count × 64-byte entries: u32 id, u8, five bytes of slot bits (bit n = bar
+    slot n; slot 0 is the left mouse button), u8 × 3, 3 bytes, 24, 24.
+
+  The SkillsList UI (`0x140c6b060`) keeps an entry when its id is in the
+  Actor's skill manager and its GrantedEffects is not hidden (+0x6e). It groups
+  them by the id's high bits: skills, the `+0x318` group, actions. `0x255`,
+  thought to be the bar in wave 20, is a one-time 112-byte copy into
+  `game+0x80c8`.
+- **Putting a skill on a slot: C→S `0x5c`** (8 bytes, sent by `0x142112ea4`):
+  u8 route, u8, u8 slot, u32 skill id. The client binds it locally
+  (`0x142138c90`), but the bar shows the icon only after the server's `0x66`
+  merge with the new slot bits. The session keeps the slots for the session
+  and answers with each changed skill's mask (the old skill of the slot loses
+  its bit).
+- **Skill use: C→S `0x1a5`** (built by `0x14210faa0`), PoE1's `0x24`/`0x25` in
+  one message:
+  - u8 route, u32 skill id, u16 flags (`0x0400`), u8 sequence (`0xff`),
+    u8 options;
+  - options bit 3: a u32 target object id follows;
+  - i32 x, i32 y: absolute with a target, else relative to the player.
+
+  19 bytes, or 23 with a target. Live: Space sends the dodge roll with a
+  relative cell; a click on a zombie sends Punch with its id and cell.
+- **The echo: S→C `0x1c8`** (read `0x141f69830`), PoE1's action started
+  `0x1ab`: object header (u32 id, u32, u8, u16), u16 flags (bit `0x80`: a u32
+  target id follows), compact actor x, y, compact target x, y, u32 skill id,
+  u16 sequence (`0xffff`: the client starts it), u8. As in PoE1, an attack on
+  an object waits for it; the session answers a targeted use of a granted skill
+  from the player's estimated cell.
+- C→S `0x67`/`0x68` (the client toggling entry flags, `0x1421134a0` /
+  `0x1421132f0`) and `0x173`, `0xbc`, `0x13d`, `0x1ac` are framed but not
+  answered.
+
+**Live test (2026-11-04).**
+- Punch shows in the picker of the left mouse slot and binds; its icon appears.
+- A click on the Rotting Guard by Clearfell's fire: the player walks to it and
+  punches (the animation plays). The dodge roll rolls on Space.
+
+Limits:
+- No damage, no monster reaction (wave 22).
+- The slots are not saved between sessions.
+- The dodge roll is not echoed; the client runs it by itself.
+- Untargeted uses (a punch at the ground) get no answer.

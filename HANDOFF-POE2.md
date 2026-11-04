@@ -4,7 +4,7 @@ Read this first if you are picking up the PoE2 work. It covers where things stan
 from nothing, how to run a live test, and what to do next. The wave-by-wave findings (addresses, message layouts,
 live results) are in [PORTING-POE2.md](PORTING-POE2.md). This file points into it and does not repeat it.
 
-Last updated 2026-11-04, after wave 20.
+Last updated 2026-11-04, after wave 21.
 
 ## Where it stands
 
@@ -13,7 +13,8 @@ enters Clearfell Encampment, served by our Gateway. Characters are created on th
 on its character screen; the player enters as the saved character (name, class model, level). The player has a HUD
 and inventories, the area is drawn, and the player walks. The server's estimate of where the player is stops at
 walls. Walking into the camp's gate takes the player to Clearfell, and its exit back returns to the camp. Clearfell's
-monsters stand where the level places them; they do not act yet.
+monsters stand where the level places them. The player has Punch and the dodge roll on its skill bar; Punch on a
+monster walks the player to it and punches, but nothing is hit yet.
 
 | Part | State | Where |
 |---|---|---|
@@ -28,8 +29,9 @@ monsters stand where the level places them; they do not act yet.
 | Walkability | Clearfell Encampment and Clearfell (seed 1); the estimate stops at walls (median 2 cells off live) | `scripts/walkmaps/poe2_walkmap.py`, `AreaLayouts.LoadCells`; wave 14 |
 | Exits, change of area | Town ↔ Clearfell: exits from a capture of the level generation, `0x2f1` / `0x29` transfer, arrival by the exit back. Exits are taken by walking into them | `AreaTransitionObjectPoe2.cs`, `Poe2Areas.cs`, `poe2-walkmap.js`; wave 19 |
 | Monsters | Placed from the captures at the area's level: types (`0x21`), blob, wake zone. No AI, attacks or hits; life is a placeholder | `MonsterObjectPoe2.cs`, `Poe2Monsters.cs`, `scripts/re/poe2/monster_varieties.py`; wave 20 |
+| Skills, skill bar, attacks | Punch and the dodge roll in the Actor; the picker's list `0x66`, slot binding `0x5c`, skill use `0x1a5` echoed with `0x1c8` for targeted uses. No damage; slots kept per session only | `SkillsPoe2.cs`, `Poe2StartingSkills.cs`, `InstanceSkillsPoe2.cs`, `scripts/re/poe2/dat.py`; wave 21 |
 
-**Tests.** 603/603 pass:
+**Tests.** 611/611 pass:
 
 ```bash
 dotnet test tests/GameServer.Core.Tests -c Release
@@ -260,7 +262,7 @@ In rough order. Each is a wave of its own.
    - add its exit rules to `Poe2Areas` (room fragments → destinations, from its `.tgr` entranceK labels).
 
    Also open: the exit click, the town gates not drawn, C→S `0x362`.
-6. **Combat** (wave 20 placed the monsters): the player's skills and attacks, hits and monster death, loot,
+6. **Combat** (wave 21 did the skills, the bar and the attack echo): hits and monster death, loot,
    monster AI, the player's death, experience. Then items, gems, passives, NPCs, waypoints and quests. PoE1's
    Gateway is the template; re-verify every id against PoE2.
 
@@ -288,4 +290,5 @@ In rough order. Each is a wave of its own.
 | 17 | The class's life, mana and attributes | `167fb9e` |
 | 18 | The character screen's preview blob | `cba781e` |
 | 19 | Exits, change of area, Clearfell | `25fee82` |
-| 20 | Monsters, the wake zone, pause | the commit after `25fee82` |
+| 20 | Monsters, the wake zone, pause | `2dd71ca` |
+| 21 | Skills, the skill bar, a targeted attack | the commit after `2dd71ca` |

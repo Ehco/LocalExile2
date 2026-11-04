@@ -118,9 +118,12 @@ partial class Program
                 var (exits, objects) = Poe2Layout(remote, area, seed);
                 var spawn = Poe2Spawn(remote, opening.Ticket, area, exits, objects, walkable);
                 var monsters = Poe2AreaMonsters(remote, area, objects);
+                // Punch and the dodge roll; the unarmed weapon's stats go in the player's stats too.
                 var session = new InstanceSessionPoe2(new PlayerObjectPoe2(spawn.X, spawn.Y,
-                    Life: (uint)sheet.MaximumLife, Mana: (uint)sheet.MaximumMana, Stats: sheet.Stats,
-                    Name: ticket.Character, ClassRow: row.Index, Experience: CharacterStats.ExperienceFor(ticket.Level)),
+                    Life: (uint)sheet.MaximumLife, Mana: (uint)sheet.MaximumMana,
+                    Stats: [.. sheet.Stats, .. Poe2StartingSkills.UnarmedStats(row)],
+                    Name: ticket.Character, ClassRow: row.Index, Experience: CharacterStats.ExperienceFor(ticket.Level),
+                    Skills: Poe2StartingSkills.For(row)),
                     objectType: row.ObjectType, walkable: walkable, exits: exits, monsters: monsters);
                 var clock = Stopwatch.StartNew();
                 double? leavingSince = null;
