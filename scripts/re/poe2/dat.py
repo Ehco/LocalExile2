@@ -34,10 +34,12 @@ def fetch(paths):
     if not todo:
         return
     os.makedirs(CACHE, exist_ok=True)
-    cmd = ["dotnet", "run", "--project", os.path.join(HERE, "steamdump"), "-c", "Release", "--", BUNDLES, CACHE] + todo
-    r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
-    if r.returncode:
-        raise SystemExit(f"steamdump failed ({r.returncode}): {r.stdout[-2000:]}{r.stderr[-2000:]}")
+    # Batches: Windows refuses a command line over 32 k characters (the gems' .it files are 600+ paths).
+    for i in range(0, len(todo), 60):
+        cmd = ["dotnet", "run", "--project", os.path.join(HERE, "steamdump"), "-c", "Release", "--", BUNDLES, CACHE] + todo[i:i + 60]
+        r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+        if r.returncode:
+            raise SystemExit(f"steamdump failed ({r.returncode}): {r.stdout[-2000:]}{r.stderr[-2000:]}")
 
 
 def columns(name):

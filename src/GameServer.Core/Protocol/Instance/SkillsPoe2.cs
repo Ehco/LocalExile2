@@ -4,8 +4,10 @@ namespace GameServer.Core.Protocol.Instance;
 /// manager with the type's basic actions, whose ids are ActionTypes HASH16 &amp; 0x3fff as in PoE1, so the server's ids
 /// start at <see cref="ActorSkillsPoe2.FirstSkillId"/>. Rows are GrantedEffectsPerLevel (0x74-byte rows) and
 /// GrantedEffectStatSetsPerLevel (0xb9-byte rows) indices.</summary>
+/// <param name="AdditionalStatSetRows">The GESSPL rows of the effect's AdditionalStatSets at the gem level (a slam's
+/// first and second slam, wave 30): one more stat-set reference and one more (empty) stats list each.</param>
 public sealed record GrantedSkillPoe2(uint Id, uint EffectsPerLevelRow, uint StatSetsPerLevelRow,
-    IReadOnlyList<(uint Key, int Value)>? Stats = null, byte Source = 0);
+    IReadOnlyList<(uint Key, int Value)>? Stats = null, byte Source = 0, IReadOnlyList<uint>? AdditionalStatSetRows = null);
 
 /// <summary>
 /// The Actor's skill list (PORTING-POE2.md wave 21). The Actor body (0x142147300) reads it on create through
@@ -47,11 +49,13 @@ public static class ActorSkillsPoe2
     {
         w.U32(s.Id).U8(s.Source)
          .U8(0).U32(s.EffectsPerLevelRow)
-         .U8(0).U32(s.StatSetsPerLevelRow)
-         .U8(0)              // flags
+         .U8(0).U32(s.StatSetsPerLevelRow);
+        foreach (uint row in s.AdditionalStatSetRows ?? []) w.U8(0).U32(row);
+        w.U8(0)              // flags
          .U8(0)              // supports
          .U32(0).U32(0).U32(0).U8(0)
-         .Stats(s.Stats)
-         .U8(0);
+         .Stats(s.Stats);
+        foreach (uint _ in s.AdditionalStatSetRows ?? []) w.Stats(null);
+        w.U8(0);
     }
 }

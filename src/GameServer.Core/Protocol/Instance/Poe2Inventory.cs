@@ -55,6 +55,23 @@ public sealed class Poe2Inventory(uint inventoryId, byte width, byte height)
             [.. added.Select(e => new InventoryItem(e.Id, e.X, e.Y, e.Item))]);
     }
 
+    /// <summary>Takes <paramref name="count"/> of a stack out (the whole item when the stack is not bigger; a bigger
+    /// stack is removed and added again smaller with a new id, as a grown one is). Returns the change to send, or null
+    /// for an id not here.</summary>
+    public byte[]? Take(uint itemId, int count = 1)
+    {
+        if (_items.FirstOrDefault(e => e.Id == itemId) is not { } entry) return null;
+        _items.Remove(entry);
+        var added = new List<InventoryItem>();
+        if (entry.Item.StackSize > count)
+        {
+            var smaller = entry with { Id = _nextId++, Item = entry.Item with { StackSize = (ushort)(entry.Item.StackSize - count) } };
+            _items.Add(smaller);
+            added.Add(new InventoryItem(smaller.Id, smaller.X, smaller.Y, smaller.Item));
+        }
+        return InstanceInventoriesPoe2.InventoryChange(inventoryId, ++_revision, [entry.Id], added);
+    }
+
     /// <summary>The first cell, row by row, where an item of this size fits, or null.</summary>
     public (byte X, byte Y)? FreeCell(byte itemWidth, byte itemHeight)
     {

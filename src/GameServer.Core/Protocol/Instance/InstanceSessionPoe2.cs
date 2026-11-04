@@ -35,6 +35,7 @@ public sealed partial class InstanceSessionPoe2
         [InstancePassivesPoe2.RefundAllId] = InstancePassivesPoe2.RefundAllLength, [InstancePassivesPoe2.ChooseId] = InstancePassivesPoe2.ChooseLength,
         [InstancePassivesPoe2.ChooseAltId] = InstancePassivesPoe2.ChooseLength, [InstancePassivesPoe2.ConfirmId] = InstancePassivesPoe2.ConfirmLength,
         [InstancePassivesPoe2.ConfirmAltId] = InstancePassivesPoe2.ConfirmLength, [0x16] = 7, [0x137] = 4,
+        [InstanceGemsPoe2.CutGemId] = InstanceGemsPoe2.CutGemLength, [InstanceGemsPoe2.CutGemIntoSlotId] = InstanceGemsPoe2.CutGemIntoSlotLength,
         [0x173] = 3, [0x17a] = 3, [0x1ac] = 3,
         [0x221] = 3, [0x23d] = 4, [InstanceProtocolPoe2.PauseRequestId] = 4, [0x2e6] = 4, [0x357] = 3,
         [InstanceProtocolPoe2.LeavingId] = 3,
@@ -44,7 +45,7 @@ public sealed partial class InstanceSessionPoe2
     /// is not mapped yet (the exits are not targetable), so walking into the gate takes it.</summary>
     public const int ExitReach = 6;
 
-    private readonly PlayerObjectPoe2 _player;
+    private PlayerObjectPoe2 _player;
     private readonly string _objectType;
     private readonly IReadOnlyList<AreaTransitionObjectPoe2> _exits;
     private readonly IReadOnlyList<Poe2Monster> _monsters;
@@ -69,6 +70,9 @@ public sealed partial class InstanceSessionPoe2
     /// <paramref name="onPassives"/> gets each new whole list to save; <paramref name="passiveNodes"/> gives their stats
     /// and the refund's cost, paid from <paramref name="gold"/>, the character's gold; <paramref name="onProgress"/> gets
     /// the total experience and the gold whenever either changes (a kill, a gold pile taken, a refund), to save.</param>
+    /// <param name="gems">The character's socketed skill gems (<see cref="Poe2Gems.Encode"/>), from its save;
+    /// <paramref name="onGems"/> gets each new whole list to save; <paramref name="gemTable"/> gives their skills;
+    /// <paramref name="startingUncutGem"/> puts an Uncut Skill Gem (Level 1) in the inventory of a character with no gem.</param>
     public InstanceSessionPoe2(PlayerObjectPoe2 player, string objectType = DefaultObjectType, uint playerId = DefaultPlayerId,
         double walkSpeed = DirectionWalk.DefaultSpeed, Func<int, int, bool>? walkable = null,
         IReadOnlyList<AreaTransitionObjectPoe2>? exits = null, IReadOnlyList<Poe2Monster>? monsters = null,
@@ -78,7 +82,8 @@ public sealed partial class InstanceSessionPoe2
         IEnumerable<string>? waypoints = null, Poe2Quests? quests = null, Poe2Areas.Area? area = null,
         Action<IReadOnlyCollection<string>>? onQuestFlags = null, Action<IReadOnlyCollection<string>>? onWaypoints = null,
         IEnumerable<int>? passives = null, Action<IReadOnlyCollection<int>>? onPassives = null, ushort questPassivePoints = 0,
-        Poe2Passives? passiveNodes = null, uint gold = 0, Action<uint, uint>? onProgress = null)
+        Poe2Passives? passiveNodes = null, uint gold = 0, Action<uint, uint>? onProgress = null,
+        IEnumerable<int>? gems = null, Action<IReadOnlyCollection<int>>? onGems = null, Poe2Gems? gemTable = null, bool startingUncutGem = false)
     {
         _onProgress = onProgress;
         (_player, _objectType, PlayerId, _exits, _monsters) = (player, objectType, playerId, exits ?? [], monsters ?? []);
@@ -90,6 +95,7 @@ public sealed partial class InstanceSessionPoe2
         _random = random ?? Random.Shared;
         InitExperience(levelStarts, onLevel);
         InitLoot(itemTypes, weapon);
+        InitGems(gems, gemTable, onGems, startingUncutGem);
         InitMonsters();
     }
 
@@ -162,6 +168,7 @@ public sealed partial class InstanceSessionPoe2
         if (InWorld && InstancePassivesPoe2.ReadAllocate(message) is { } allocate) return AllocatePassive(allocate);
         if (InWorld && InstancePassivesPoe2.ReadRefund(message) is { } refund) return RefundPassive(refund.Node);
         if (InWorld && InstancePassivesPoe2.IsRefundAll(message)) return RefundAllPassives();
+        if (InWorld && InstanceGemsPoe2.ReadCutGem(message) is { } cut) return CutGem(cut);
         if (InWorld && InstanceSkillsPoe2.ReadUseSkill(message, out _) is { TargetId: { } item } pick && _groundItems.ContainsKey(item))
             return BeginPickup(item, pick, now);
         if (InWorld && InstanceSkillsPoe2.ReadUseSkill(message, out _) is { TargetId: { } npc } talk && IsUsable(npc))
@@ -300,8 +307,8 @@ public sealed partial class InstanceSessionPoe2
         return InstanceProtocolPoe2.ChangeArea(near.DestinationHash16);
     }
 
-    /// <summary>The local player (0x24), the player object (0x2f7), its inventories (0xdf) and the starting weapon in
-    /// them (0xde), enter area (0x23) and the
+    /// <summary>The local player (0x24), the player object (0x2f7), its inventories (0xdf), the starting weapon in
+    /// them and the socketed gems (0xde), enter area (0x23) and the
     /// frame length (0x2f5), in the order the client accepted live, and the skills the skill bar offers (0x66); then the
     /// passive tree (0x3a) and gold (0x2db), the area's exits, its monsters after their types (0x21), its NPCs and other
     /// server objects, and the character's quest flags (0x2f9) and waypoints (0x5a).</summary>
@@ -312,6 +319,7 @@ public sealed partial class InstanceSessionPoe2
         [.. InstanceInventoriesPoe2.PlayerDefaults.SelectMany(slot =>
             InstanceInventoriesPoe2.AddInventory(InstanceInventoriesPoe2.InventoryId(slot.Row), slot))],
         .. EquipmentMessages(),
+        .. GemMessages(),
         InstanceProtocolPoe2.EnterArea(PlayerId),
         InstanceProtocolPoe2.FrameLength(FrameMs),
         InstanceProtocolPoe2.SkillList([.. SkillIds.Select(id => (id, SlotMask(id)))]),

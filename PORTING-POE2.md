@@ -2116,3 +2116,67 @@ with its own object type rather than a WorldItem), the pickup (PoE2 picks gold
 up by walking over it: the client may send something other than the item
 click `0x1a5` / `0x2000c266`), the gold label after the pickup, and the
 experience and gold after a relog.
+
+## Wave 30 — skill gems (2026-11-05)
+
+Written without a live test: the data, the server model and the message
+layouts come from the tables and the disassembly; the client's reactions are
+to be checked in game (list at the end). Code: `Poe2Gems.cs`,
+`InstanceGemsPoe2.cs`, `InstanceSessionPoe2.Gems.cs`, `SkillsPoe2.cs`
+(additional stat sets), `Poe2Inventory.Take`, `Poe2Items.RollUncutGem`, the
+Auth op `set_gems` (`Character.Gems`), `scripts/re/poe2/gems.py`,
+`item_types.py` (the gems), `cs_sigs.py`.
+
+- **PoE2's gems.** A skill gem is an item (`Metadata/Items/Gems/SkillGem*`,
+  641 bases; .it chain Base, SkillGem, Quality, Sockets for an active gem, Base,
+  SkillGem, Quality for a support) that sits in the skill slots inventory
+  (Inventories row 62 `SkillSlots1`, type 41, 15 × 1; `DefaultAttackSkills1`
+  94 and `AscendancySkills1` 95 beside it) and grants its effect's skill. It is
+  made by cutting an **uncut gem**: `SkillGemUncut1`…`20` (BaseItemTypes
+  4902+, `UncutGems.datc64` tier = the gem level; Base, Usable, Stack),
+  `SupportGemUncut`, `ReservationGemUncut` (spirit). SkillGems: GemType 0
+  skill, 1 support (its effect IsSupport), 2 spirit; GemColour 1 red, 2 green,
+  3 blue, 4 white; MinLevelReq; the attribute percents; GemEffects (the first
+  is the regular gem) → GrantedEffect → ActiveSkill, StatSet and
+  AdditionalStatSets. `gems.py` writes `data/poe2/gems.json` (1188 gems, 47
+  uncut): per gem level the GEPL row and the GESSPL rows (StatSet first, then
+  the additional ones, by (StatSet, GemLevel)). Rolling Slam: base 589, GEPL
+  6113, GESSPL 7797 + 7837 (first slam) + 7877 (second slam).
+- **The Actor skill record** takes one more stat-set reference per additional
+  stat set and one more (empty) stats list each (`GrantedSkillPoe2.
+  AdditionalStatSetRows`, wave 21's format); the earlier skills had one set.
+- **The gem window** is the client's "SkillCrafter" (strings
+  `SkillCrafterWindow`, `GemcuttingNew/…`, `UncutGemCannotBeCraftedError`,
+  `Data/Balance/SkillCraftingData.dat`, `UncutGems.dat`). Its confirm
+  (`0x140a4ca20`) sends **C→S `0x5f`** (vtable `0x1434e5198`, writer
+  `0x141f388f0`: 2 1 4 4 4): u8 route, u32 BE the selected entry's `+0x8c`,
+  u32 BE the uncut gem's inventory (`+0x424`, looked up with `0x141cf1b70`),
+  u32 BE its item (`+0x428`); with a target it calls `0x142113800` → **`0x60`**
+  (writer `0x141f39f80`: 2 1 4 4 4 4 1): inventory, item, target, the entry,
+  u8. **Open:** what `+0x8c` is (`Poe2Gems.Resolve` tries the BaseItemTypes
+  row, the HASH32, the SkillGems row and the GemEffects row, in that order) and
+  the field order on the wire (the builders' store order is assumed).
+- **The server** (`CutGem`): the uncut gem leaves the inventory (`0xde`), the
+  gem becomes an item of the skill slots (`0xde` to inventory 63; SkillGem
+  data as PoE1's: i32 experience, u32 variant, u8 flags, u16 — not verified on
+  the PoE2 reader), its skill joins the Actor (**S→C `0x2f9` to component 8,
+  the Actor: u8 flags `0x08` then the whole skill list**, the update path of
+  `0x142149510`, wave 21; not seen live) and the picker (`0x66` merge). Skill
+  ids: `0x112` + slot. The gems are saved (`set_gems`, row | level << 16 |
+  slot << 24) and come back as skills on entering. Supports and spirit gems
+  are refused (no socket model yet). A character with no gem gets an Uncut
+  Skill Gem (Level 1) in its inventory at each entry (ours; PoE2 drops the
+  first one at the Riverbank's boss). Kills drop uncut gems (4 %, the highest
+  tier the level reaches).
+- **`scripts/re/poe2/cs_sigs.py`**: the catalogue of every C→S message
+  builder (callers of the send helper `0x14211fa00`, 514 sites): id, vtable,
+  builder, the writer slot (the one that starts with `movzx ecx, word ptr
+  [rcx+8]; call htons`) and its writes. That is how `0x5f` / `0x60` were
+  found; the catalogue (`cs.txt`) is the map for the inventory, flask and item
+  messages.
+
+To check live: the gem window opens on the uncut gem and lists gems; what
+`0x5f` carries (the Gateway logs the chunk with `Game_POE2_TRACE=1`); whether
+the client accepts the skill gem item in inventory 63 and the Actor update
+(the picker should offer Rolling Slam); the uncut gem item in the inventory;
+the uncut drops on the ground.

@@ -86,6 +86,18 @@ public static class Poe2Items
         return Create(gold, random.Next(GoldBaseMinimum + GoldPerLevelMinimum * level, GoldBaseMaximum + GoldPerLevelMaximum * level + 1));
     }
 
+    /// <summary>The chance (percent) that a normal monster drops an uncut skill gem: our own number (wave 30).</summary>
+    public const int UncutGemDropChance = 4;
+
+    /// <summary>A kill's uncut skill gem, or null: with <see cref="UncutGemDropChance"/>, the tiered Uncut Skill Gem of
+    /// the highest tier the monster's level reaches; nothing without the gem table or the item type.</summary>
+    public static Item? RollUncutGem(IReadOnlyDictionary<string, ItemType> types, Poe2Gems gems, int monsterLevel, Random random)
+    {
+        if (gems.Count == 0 || random.Next(100) >= UncutGemDropChance) return null;
+        var uncut = gems.UncutGems.Where(u => u.Kind == Poe2Gems.SkillKind && u.Tier >= 1 && u.Tier <= Math.Max(1, monsterLevel)).MaxBy(u => u.Tier);
+        return uncut is not null && types.TryGetValue(uncut.Id, out var type) ? Create(type) : null;
+    }
+
     /// <summary>A kill's drop, or null: one item of <see cref="Drops"/> whose drop level the monster reaches, with
     /// <see cref="DropChance"/>.</summary>
     public static Item? Roll(IReadOnlyDictionary<string, ItemType> types, int monsterLevel, Random random)

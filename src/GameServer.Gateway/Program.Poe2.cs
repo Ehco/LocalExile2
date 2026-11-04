@@ -18,7 +18,8 @@ partial class Program
     // What the Gateway enters a PoE2 client with: Auth's area and character for the ticket, with the character's quest
     // flags (QuestFlags Ids) and activated waypoints (WorldAreas Ids).
     sealed record Poe2Ticket(ushort Area, uint Seed, ulong Instance, string Character, CharacterClass Class, int Level,
-        IReadOnlyList<string> QuestFlags, IReadOnlyList<string> Waypoints, IReadOnlyList<int> Passives, uint Experience = 0, uint Gold = 0);
+        IReadOnlyList<string> QuestFlags, IReadOnlyList<string> Waypoints, IReadOnlyList<int> Passives, uint Experience = 0, uint Gold = 0,
+        IReadOnlyList<int>? Gems = null);
 
     // Game_POE2_TRACE=1 logs every decrypted client chunk (its first 48 bytes), to map new C→S messages.
     static readonly bool Poe2Trace = Environment.GetEnvironmentVariable("Game_POE2_TRACE") == "1";
@@ -137,7 +138,8 @@ partial class Program
                     Life: (uint)sheet.MaximumLife, Mana: (uint)sheet.MaximumMana,
                     Stats: [.. sheet.Stats, .. Poe2StartingSkills.MainHandStats(row, weapon)],
                     Name: ticket.Character, ClassRow: row.Index, Experience: Math.Max(CharacterStats.ExperienceFor(ticket.Level), ticket.Experience),
-                    Skills: Poe2StartingSkills.For(row, weapon), Visible: weapon is null ? null : [Poe2Items.Visible(weapon)]),
+                    Skills: [.. Poe2StartingSkills.For(row, weapon), .. InstanceGemsPoe2.Skills(Poe2GemTable.Value, ticket.Gems ?? [])],
+                    Visible: weapon is null ? null : [Poe2Items.Visible(weapon)]),
                     objectType: row.ObjectType, walkable: walkable, exits: exits, monsters: monsters,
                     levelStarts: CharacterStats.LevelStarts, onLevel: level => _ = SavePoe2Level(remote, opening.Ticket, level),
                     itemTypes: Poe2ItemTypes.Value, weapon: weapon, serverObjects: serverObjects,
@@ -147,7 +149,11 @@ partial class Program
                     passives: ticket.Passives, onPassives: nodes => _ = SavePoe2Passives(remote, opening.Ticket, nodes),
                     questPassivePoints: Poe2QuestPassivePoints, passiveNodes: Poe2PassiveNodes.Value,
                     gold: ticket.Gold == 0 ? Poe2StartingGold : ticket.Gold,
-                    onProgress: (experience, gold) => _ = SavePoe2Progress(remote, opening.Ticket, experience, gold));
+                    onProgress: (experience, gold) => _ = SavePoe2Progress(remote, opening.Ticket, experience, gold),
+                    gems: ticket.Gems, onGems: gems => _ = SavePoe2Gems(remote, opening.Ticket, gems), gemTable: Poe2GemTable.Value,
+                    startingUncutGem: (ticket.Gems ?? []).Count == 0);
+                if (Poe2GemTable.Value.Count == 0)
+                    Console.WriteLine($"[gateway] {remote} no {Poe2Gems.DefaultPath}: no gem skills, no uncut gems (scripts/re/poe2/gems.py)");
                 var clock = Stopwatch.StartNew();
                 double? leavingSince = null;
                 bool transferred = false;
@@ -214,7 +220,7 @@ partial class Program
                 string.IsNullOrEmpty(resolved.Character) ? "Exile" : resolved.Character,
                 Enum.IsDefined((CharacterClass)resolved.Class) ? (CharacterClass)resolved.Class : CharacterClass.Witch,
                 Math.Clamp(resolved.Level, 1, 100), resolved.QuestFlags ?? [], resolved.Waypoints ?? [], resolved.Passives ?? [],
-                resolved.Experience, resolved.Gold);
+                resolved.Experience, resolved.Gold, resolved.Gems ?? []);
         Console.WriteLine($"[gateway] {remote} ticket 0x{ticket:x8} not resolved ({resolved.Error ?? "unknown area"}); " +
                           "Clearfell Encampment, seed 1, instance 1");
         return new(Poe2FallbackArea, 1, 1, "Exile", CharacterClass.Witch, 1, [], [], []);
@@ -234,6 +240,15 @@ partial class Program
 
     // Passive points beside the levels' (PoE2's quest rewards, not implemented): env Game_POE2_PASSIVE_POINTS, for tests.
     static readonly Lazy<Poe2Passives> Poe2PassiveNodes = new(() => Poe2Passives.Load());
+
+    static readonly Lazy<Poe2Gems> Poe2GemTable = new(() => Poe2Gems.Load());
+
+    // The character's whole list of socketed gems goes to Auth ("set_gems") at each cut (wave 30).
+    static async Task SavePoe2Gems(string remote, uint ticket, IReadOnlyCollection<int> gems)
+    {
+        var saved = await InstanceControl.CallAsync(new ControlRequest { Op = "set_gems", Ticket = ticket, Values = [.. gems] });
+        Console.WriteLine(saved.Ok ? $"[gateway] {remote} {gems.Count} gems saved" : $"[gateway] {remote} gems not saved: {saved.Error ?? "no answer"}");
+    }
 
     static readonly ushort Poe2QuestPassivePoints =
         ushort.TryParse(Environment.GetEnvironmentVariable("Game_POE2_PASSIVE_POINTS"), out var points) ? points : (ushort)0;

@@ -52,7 +52,8 @@ public static class InstanceControl
 /// "set_quest_flags" (Ticket, Flags) → the ticket's PoE2 character's whole quest flag list (QuestFlags Ids);
 /// "set_waypoints" (Ticket, Flags) → its whole list of activated waypoints (WorldAreas Ids);
 /// "set_passives" (Ticket, Values) → its whole list of allocated passive nodes;
-/// "set_progress" (Ticket, Experience, Gold) → its total experience and gold. "resolve" returns all of them.
+/// "set_progress" (Ticket, Experience, Gold) → its total experience and gold;
+/// "set_gems" (Ticket, Values) → its whole list of socketed skill gems. "resolve" returns all of them.
 /// </summary>
 public sealed record ControlRequest
 {
@@ -66,7 +67,7 @@ public sealed record ControlRequest
     public ushort Portrait { get; init; }
     /// <summary>"set_quest_flags" / "set_waypoints": the whole new list.</summary>
     public List<string>? Flags { get; init; }
-    /// <summary>"set_passives": the whole new list of PassiveSkillGraphIds.</summary>
+    /// <summary>"set_passives": the whole new list of PassiveSkillGraphIds; "set_gems": the socketed gems.</summary>
     public List<int>? Values { get; init; }
     /// <summary>"set_progress": the character's total experience and gold.</summary>
     public uint Experience { get; init; }
@@ -110,6 +111,8 @@ public sealed record ControlResponse
     /// <summary>"resolve": a PoE2 character's total experience and gold (wave 29).</summary>
     public uint Experience { get; init; }
     public uint Gold { get; init; }
+    /// <summary>"resolve": a PoE2 character's socketed skill gems (wave 30).</summary>
+    public List<int>? Gems { get; init; }
 }
 
 public sealed record ControlInstance(ulong Id, long CreatedUnix, int SecondsLeft, List<string> Players);
