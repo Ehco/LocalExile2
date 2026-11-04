@@ -277,7 +277,8 @@ def parse(text):
     toks = TOKEN.findall(re.sub(r"//[^\n]*", "", text))
     r = {"extends": [], "abstract": False, "sections": [], "client": [], "server": [], "version": None,
          "shared_states": [], "shared_timers": [], "transitionable": {}, "tags": [], "basic_actions": [],
-         "client_transitionable": {}, "client_targetable": None, "life": {}, "positioned": {}, "animated": {}}
+         "client_transitionable": {}, "client_targetable": None, "life": {}, "positioned": {}, "animated": {},
+         "quest_flag_states": []}
     i = 0
 
     def block(i):  # i at '{' -> index after matching '}', plus the names of sections directly inside
@@ -359,6 +360,12 @@ def state_machine(toks, r):
                     except ValueError:
                         v = 0
                     r["shared_states"].append([name, v])
+        # PoE2: per_player_quest_flag_state_<state>_<value> = "Flag" — the server sets the shared state to the value
+        # when the player has the quest flag (PORTING-POE2.md wave 27).
+        elif depth == 0 and t.startswith("per_player_quest_flag_state_") and k + 2 < len(toks) and toks[k + 1] == "=":
+            state, _, value = t[len("per_player_quest_flag_state_"):].rpartition("_")
+            if state and value.isdigit():
+                r["quest_flag_states"].append([state, int(value), toks[k + 2].strip("\"'")])
 
 
 def client_sections(toks, r):
@@ -453,6 +460,7 @@ def merge(type_path, files, otc, first=("Positioned",)):
             "animated_object": next((f["animated"]["animated_object"] for _, f in reversed(ch)
                                      if f and "animated_object" in f.get("animated", {})), None),
             "shared_states": [[k, v] for k, v in states.items()], "shared_timers": timers,
+            "quest_flag_states": [q for _, f in ch for q in (f or {}).get("quest_flag_states", [])],
             # The Actor's basic actions (ClientActor ctor 0x142192860 adds one skill per name, id = HASH16 & 0x3fff),
             # parents first: e.g. Monster.ot's Move, and "Emerge" for monsters that rise from the ground.
             "basic_actions": list(dict.fromkeys(a for _, f in ch for a in (f or {}).get("basic_actions", []))),

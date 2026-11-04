@@ -43,7 +43,7 @@ public sealed partial class InstanceSessionPoe2
     {
         _itemTypes = itemTypes ?? _itemTypes;
         _itemTypesByHash = _itemTypes.Values.GroupBy(t => t.Hash).ToDictionary(g => g.Key, g => g.First());
-        _nextItemId = MonsterId(_monsters.Count);
+        _nextItemId = ServerObjectId(_objects.Count);
         if (weapon is not null) _weaponChange = _weapon1.Add(Poe2Items.Create(weapon), weapon.Width, weapon.Height, 1);
     }
 

@@ -30,7 +30,7 @@ public sealed partial class InstanceSessionPoe2
     static readonly Dictionary<ushort, int> FixedLengths = new()
     {
         [0x1c] = 7, [0x5c] = 8, [0x62] = 4, [InstanceCombatPoe2.ResurrectId] = 4, [InstanceProtocolPoe2.AreaGeneratedId] = 11, [0xbc] = 5, [0x13d] = 3,
-        [0x173] = 3, [0x17a] = 3, [0x1ac] = 3,
+        [InstanceNpcsPoe2.ChooseTalkId] = 4, [InstanceNpcsPoe2.CloseTalkId] = 3, [0x173] = 3, [0x17a] = 3, [0x1ac] = 3,
         [0x221] = 3, [0x23d] = 4, [InstanceProtocolPoe2.PauseRequestId] = 4, [0x2e6] = 4, [0x357] = 3,
         [InstanceProtocolPoe2.LeavingId] = 3,
     };
@@ -43,6 +43,7 @@ public sealed partial class InstanceSessionPoe2
     private readonly string _objectType;
     private readonly IReadOnlyList<AreaTransitionObjectPoe2> _exits;
     private readonly IReadOnlyList<Poe2Monster> _monsters;
+    private readonly IReadOnlyList<ServerObjectPoe2> _objects;
     private readonly int[] _monsterLife;
     private readonly Random _random;
 
@@ -52,13 +53,16 @@ public sealed partial class InstanceSessionPoe2
     /// player stays level 1.</param>
     /// <param name="onLevel">Called with the new level when a kill levels the player up (under the session's lock).</param>
     /// <param name="itemTypes">The item types monsters drop (<see cref="Poe2Items"/>); without them nothing drops.</param>
+    /// <param name="serverObjects">The area's NPCs, waypoint and other server objects (<see cref="World.Poe2ServerObjects"/>).</param>
     public InstanceSessionPoe2(PlayerObjectPoe2 player, string objectType = DefaultObjectType, uint playerId = DefaultPlayerId,
         double walkSpeed = DirectionWalk.DefaultSpeed, Func<int, int, bool>? walkable = null,
         IReadOnlyList<AreaTransitionObjectPoe2>? exits = null, IReadOnlyList<Poe2Monster>? monsters = null,
         Random? random = null, IReadOnlyList<uint>? levelStarts = null, Action<int>? onLevel = null,
-        IReadOnlyDictionary<string, Poe2Items.ItemType>? itemTypes = null, Poe2Items.ItemType? weapon = null)
+        IReadOnlyDictionary<string, Poe2Items.ItemType>? itemTypes = null, Poe2Items.ItemType? weapon = null,
+        IReadOnlyList<ServerObjectPoe2>? serverObjects = null)
     {
         (_player, _objectType, PlayerId, _exits, _monsters) = (player, objectType, playerId, exits ?? [], monsters ?? []);
+        _objects = serverObjects ?? [];
         Walk = new DirectionWalk(player.GridX, player.GridY, walkSpeed, walkable);
         _walkSpeed = walkSpeed;
         _monsterLife = [.. _monsters.Select(m => (int)m.Object.Life)];
@@ -124,13 +128,18 @@ public sealed partial class InstanceSessionPoe2
             // own cell: start from it instead of the estimate.
             CancelAttack(now);
             CancelPickup(now);
+            CancelTalk(now);
             if (move.X != 0 || move.Y != 0) Walk.Place(move.X, move.Y, now);
             var (x, y) = Walk.Turn(move.Dx, move.Dy, now);
             return [InstanceMovementPoe2.DirectionMoveEcho(PlayerId, move.Dx, move.Dy, x, y, move.Flag != 0)];
         }
         if (InWorld && InstanceProtocolPoe2.ReadSetSkillSlot(message) is { } bind) return BindSlot(bind.Slot, bind.SkillId);
+        if (InWorld && InstanceNpcsPoe2.ReadChooseTalk(message) is byte option) return ChooseTalk(option);
+        if (InWorld && InstanceNpcsPoe2.IsCloseTalk(message)) return CloseTalk();
         if (InWorld && InstanceSkillsPoe2.ReadUseSkill(message, out _) is { TargetId: { } item } pick && _groundItems.ContainsKey(item))
             return BeginPickup(item, pick, now);
+        if (InWorld && InstanceSkillsPoe2.ReadUseSkill(message, out _) is { TargetId: { } npc } talk && IsUsable(npc))
+            return BeginTalk(npc, talk, now);
         if (InWorld && InstanceSkillsPoe2.ReadUseSkill(message, out _) is { TargetId: { } target } use &&
             _player.Skills?.FirstOrDefault(s => s.Id == use.SkillId) is { } skill)
         {
@@ -246,6 +255,7 @@ public sealed partial class InstanceSessionPoe2
             if (!InWorld || LeavingBy is not null) return [];
             var sent = AttackTick(now).ToList();
             sent.AddRange(PickupTick(now));
+            sent.AddRange(TalkTick(now));
             sent.AddRange(MonsterTick(now));
             if (ExitTick(now) is { } change) sent.Add(change);
             return sent;
@@ -266,7 +276,7 @@ public sealed partial class InstanceSessionPoe2
     /// <summary>The local player (0x24), the player object (0x2f7), its inventories (0xdf) and the starting weapon in
     /// them (0xde), enter area (0x23) and the
     /// frame length (0x2f5), in the order the client accepted live, and the skills the skill bar offers (0x66); then the
-    /// area's exits, and its monsters after their types (0x21).</summary>
+    /// area's exits, its monsters after their types (0x21), and its NPCs and other server objects.</summary>
     public IReadOnlyList<byte[]> EnterWorld() =>
     [
         InstanceProtocolPoe2.SetLocalPlayer(PlayerId),
@@ -280,6 +290,8 @@ public sealed partial class InstanceSessionPoe2
         .. _exits.Select((exit, i) => InstanceProtocolPoe2.CreateObject(ExitId(i),
             InstanceEntities.ObjectTypeHash(AreaTransitionObjectPoe2.MetadataPath), exit.Blob())),
         .. MonsterMessages(),
+        .. _objects.Select((o, i) => InstanceProtocolPoe2.CreateObject(ServerObjectId(i), InstanceEntities.ObjectTypeHash(o.TypePath),
+            o.Blob())),
     ];
 
     private IEnumerable<byte[]> MonsterMessages()
@@ -296,6 +308,9 @@ public sealed partial class InstanceSessionPoe2
 
     /// <summary>The entity id of the area's i-th monster, after the exits.</summary>
     public uint MonsterId(int i) => ExitId(_exits.Count) + (uint)i;
+
+    /// <summary>The entity id of the area's i-th server object (NPC, waypoint, ...), after the monsters.</summary>
+    public uint ServerObjectId(int i) => MonsterId(_monsters.Count) + (uint)i;
 
     /// <summary>Whether <see cref="Split"/> knows the length of messages with this id.</summary>
     public static bool CanFrame(ushort id) =>

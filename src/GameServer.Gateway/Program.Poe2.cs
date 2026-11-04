@@ -118,6 +118,7 @@ partial class Program
                 var (exits, objects) = Poe2Layout(remote, area, seed);
                 var spawn = Poe2Spawn(remote, opening.Ticket, area, exits, objects, walkable);
                 var monsters = Poe2AreaMonsters(remote, area, objects);
+                var serverObjects = Poe2AreaServerObjects(remote, area, objects, new HashSet<string>());
                 // The class's starting weapon in the main hand (data/poe2/item-types.json), swung with Default
                 // Attack, and the dodge roll; the main hand's stats go in the player's stats too. The weapon is given
                 // again at each entry: inventories are not saved.
@@ -129,7 +130,7 @@ partial class Program
                     Skills: Poe2StartingSkills.For(row, weapon), Visible: weapon is null ? null : [Poe2Items.Visible(weapon)]),
                     objectType: row.ObjectType, walkable: walkable, exits: exits, monsters: monsters,
                     levelStarts: CharacterStats.LevelStarts, onLevel: level => _ = SavePoe2Level(remote, opening.Ticket, level),
-                    itemTypes: Poe2ItemTypes.Value, weapon: weapon);
+                    itemTypes: Poe2ItemTypes.Value, weapon: weapon, serverObjects: serverObjects);
                 var clock = Stopwatch.StartNew();
                 double? leavingSince = null;
                 bool transferred = false;
@@ -271,6 +272,27 @@ partial class Program
         Console.WriteLine($"[gateway] {remote} {id}: {monsters.Count} monsters " +
             string.Join(", ", monsters.Select(m => $"{m.VarietyId.Split('/')[^1]} ({m.Object.GridX}, {m.Object.GridY}) life {m.Object.Life}")));
         return monsters;
+    }
+
+    static readonly Lazy<IReadOnlyDictionary<string, Poe2ServerObjects.ObjectType>> Poe2ObjectTypes = new(() => Poe2ServerObjects.Load());
+
+    // The NPCs, waypoint and other server objects the area's capture places, of the types in
+    // data/poe2/server-objects.json, with their states for the player's quest flags.
+    static IReadOnlyList<ServerObjectPoe2> Poe2AreaServerObjects(string remote, ushort hash, IReadOnlyList<Poe2Areas.PlacedObject> objects,
+        IReadOnlySet<string> questFlags)
+    {
+        string id = Poe2AreaId(hash);
+        if (Poe2ObjectTypes.Value.Count == 0)
+        {
+            Console.WriteLine($"[gateway] {remote} no {Poe2ServerObjects.DefaultPath}: no NPCs");
+            return [];
+        }
+        var notes = new List<string>();
+        var placed = Poe2ServerObjects.InArea(objects, Poe2ObjectTypes.Value, questFlags, notes);
+        foreach (var note in notes) Console.WriteLine($"[gateway] {remote} {id}: {note}");
+        Console.WriteLine($"[gateway] {remote} {id}: {placed.Count} server objects " +
+            string.Join(", ", placed.Select(o => $"{o.TypePath.Split('/')[^1]} ({o.GridX}, {o.GridY})")));
+        return placed;
     }
 
     // Where the player appears: by the exit back to the area the ticket's transfer left, else by the exit to the
