@@ -233,6 +233,7 @@ partial class Program
     }
 
     static readonly Lazy<IReadOnlyDictionary<string, Poe2Monsters.Variety>> Poe2Varieties = new(() => Poe2Monsters.Load());
+    static readonly Lazy<IReadOnlyList<Poe2Monsters.LevelStats>> Poe2MonsterLevels = new(() => Poe2Monsters.LoadLevels());
 
     // The monsters the area's capture places, of the varieties in data/poe2/monster-varieties.json.
     static IReadOnlyList<Poe2Monster> Poe2AreaMonsters(string remote, ushort hash, IReadOnlyList<Poe2Areas.PlacedObject> objects)
@@ -245,10 +246,10 @@ partial class Program
         }
         var notes = new List<string>();
         byte level = Poe2Areas.ByHash(hash)?.Level ?? 1;
-        var monsters = Poe2Monsters.InArea(objects, Poe2Varieties.Value, level, life: 30, notes);
+        var monsters = Poe2Monsters.InArea(objects, Poe2Varieties.Value, level, Poe2MonsterLevels.Value, notes);
         foreach (var note in notes) Console.WriteLine($"[gateway] {remote} {id}: {note}");
         Console.WriteLine($"[gateway] {remote} {id}: {monsters.Count} monsters " +
-            string.Join(", ", monsters.Select(m => $"{m.VarietyId.Split('/')[^1]} ({m.Object.GridX}, {m.Object.GridY})")));
+            string.Join(", ", monsters.Select(m => $"{m.VarietyId.Split('/')[^1]} ({m.Object.GridX}, {m.Object.GridY}) life {m.Object.Life}")));
         return monsters;
     }
 

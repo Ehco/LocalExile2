@@ -1407,3 +1407,66 @@ Limits:
 - The slots are not saved between sessions.
 - The dodge roll is not echoed; the client runs it by itself.
 - Untargeted uses (a punch at the ground) get no answer.
+
+## Wave 22 — hits and monster death (2026-11-04)
+
+Punching a Rotting Guard takes its life down; at 0 it dies and can no longer be
+targeted. Loot needs items on the ground, so it moves to the items wave.
+
+- **Where object messages go.** The world handler (`0x1421343c0`, which also
+  runs create object) sends ids `0x1af`–`0x2a6` through a jump table to the
+  object's components (index tables `0x14213647c` / `0x142136440`):
+
+  | Ids | Component | Handler |
+  |---|---|---|
+  | `0x1c5` | remove from the world (`0x141e717a0`) | — |
+  | `0x1c6` / `0x1c7` | enter / leave the wake zone | `0x141e73d70` / `0x141e740a0` |
+  | `0x1c8`–`0x1ce`, `0x1d8`–`0x1dc`, `0x1f9`–`0x1fc`, `0x222`, `0x223`, `0x295` | Actor | `0x1421497c0` |
+  | `0x1cf`–`0x1d1`, `0x296` | Life | `0x141d8ea60` |
+  | `0x1d2`, `0x2a4`–`0x2a6` | Animated | `0x141da8a40` |
+  | `0x1d3`–`0x1d7` | Stats | `0x1421820a0` |
+  | `0x1eb`–`0x1ed` | Buffs | `0x141db52d0` |
+  | `0x1dd`–`0x1ea` (most) | Positioned | `0x141dda7c0` |
+
+  PoE1's ids `0x1a8`+ map to `0x1c5`+ with gaps: action started `0x1ab` →
+  `0x1c8`, action target `0x1ad` → `0x1cb`, life `0x1b1` → `0x1cf`, stats
+  `0x1b3` → `0x1d3`. The action hit (PoE1 `0x1af`) is `0x1fb`: header, u16
+  sequence, u32 target, u16 flags, u8 kind, then a u16-length opaque blob
+  (`0x141f4d500`); not sent yet (the blood and the impact sound).
+- **Life: S→C `0x1cf`** (read `0x141f6cb20`). Object header, u8 flags (pool in
+  bits 0–2; bit 7 compact current, bit 6 u32 → `+0x24`, bit 5 u32 → `+0x28`,
+  bit 4 u16 → `+0x2e`), u8 (`+0x30`, passed to the death slot), then the fields.
+  - Pools: 0 life `+0x1a8`, 1 `+0x200`, 2 energy shield `+0x240`, 3 `+0x298`,
+    4 mana `+0x2e0`, 5 `+0x330`.
+  - The store `0x141d88f20` copies every field whether its bit is set or not,
+    so the server sends all of them (0, as in the blob).
+  - Life going from ≥ 1 to ≤ 0 calls the owner's death slot (vtable `+0x130`);
+    back above 0, its revive slot (`+0x158`).
+- **Stats: S→C `0x1d3`** (read `0x141f6de60`): PoE1's `0x1b3` with a u8 after the
+  header, then compact count and (compact key, compact value) pairs. At death
+  the server sets `hide_mini_life_bar` (`0x2733`): as in PoE1, the mini life
+  bar otherwise keeps its last sliver.
+- **Monster life.** `monster_varieties.py` now also writes each variety's
+  combat columns (Name, Life/Damage/ExperienceMultiplier, AttackSpeed,
+  attack distances, MovementSpeed, ObjectSize) and
+  `data/poe2/default-monster-stats.json` (DefaultMonsterStats by level: life,
+  damage, experience, accuracy, evasion, armour). A Rotting Guard at level 2
+  has 20 × 100 % = 20 life. The monster's Stats component now carries
+  `maximum_life`, which the life bar needs for its fraction.
+- **The hit** (`InstanceSessionPoe2`). A targeted use of an attack skill
+  (`AttackPoe2.Of`: the skill's main-hand damage, attack time and reach) on a
+  live monster starts an approach: the player walks at the walk speed until
+  within reach, the swing starts once the previous one has ended, and the hit
+  lands at half the attack time. The session's `Tick` then rolls the damage
+  and sends `0x1cf`. A move before the hit cancels it, the walk estimate placed
+  where the approach had got.
+
+**Live test (2026-11-04).** The Rotting Guard by Clearfell's fire: the first
+punch took its bar to about 70 %; it died on the fourth (2–8 per punch), its
+bar hidden, and could no longer be targeted.
+
+Limits:
+- No loot (items on the ground are the items wave), no action hit `0x1fb`
+  (blood, sound), no flinch.
+- No experience (wave 24). Monsters do not fight back (wave 23).
+- Monsters do not move, so the approach aims at their placed cell.

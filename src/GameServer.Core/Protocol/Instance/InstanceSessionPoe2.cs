@@ -43,16 +43,24 @@ public sealed class InstanceSessionPoe2
     private readonly string _objectType;
     private readonly IReadOnlyList<AreaTransitionObjectPoe2> _exits;
     private readonly IReadOnlyList<Poe2Monster> _monsters;
+    private readonly int[] _monsterLife;
+    private readonly Random _random;
 
     /// <param name="walkable">The area's walkability (cells the client walks on), when the server has its walk map;
     /// without it the walk estimate goes through walls.</param>
     public InstanceSessionPoe2(PlayerObjectPoe2 player, string objectType = DefaultObjectType, uint playerId = DefaultPlayerId,
         double walkSpeed = DirectionWalk.DefaultSpeed, Func<int, int, bool>? walkable = null,
-        IReadOnlyList<AreaTransitionObjectPoe2>? exits = null, IReadOnlyList<Poe2Monster>? monsters = null)
+        IReadOnlyList<AreaTransitionObjectPoe2>? exits = null, IReadOnlyList<Poe2Monster>? monsters = null,
+        Random? random = null)
     {
         (_player, _objectType, PlayerId, _exits, _monsters) = (player, objectType, playerId, exits ?? [], monsters ?? []);
         Walk = new DirectionWalk(player.GridX, player.GridY, walkSpeed, walkable);
+        _walkSpeed = walkSpeed;
+        _monsterLife = [.. _monsters.Select(m => (int)m.Object.Life)];
+        _random = random ?? Random.Shared;
     }
+
+    private readonly double _walkSpeed;
 
     public uint PlayerId { get; }
     public DirectionWalk Walk { get; }
@@ -95,20 +103,86 @@ public sealed class InstanceSessionPoe2
         if (InstanceProtocolPoe2.ReadPauseRequest(message) is { } pause) return [InstanceProtocolPoe2.PauseState(pause)];
         if (InWorld && InstanceMovementPoe2.ReadDirectionMove(message, out _) is { } move)
         {
-            // Outside lockstep the client reports its own cell: start from it instead of the estimate.
+            // A move ends the attack in progress (the client drops its action). Outside lockstep the client reports its
+            // own cell: start from it instead of the estimate.
+            CancelAttack(now);
             if (move.X != 0 || move.Y != 0) Walk.Place(move.X, move.Y, now);
             var (x, y) = Walk.Turn(move.Dx, move.Dy, now);
             return [InstanceMovementPoe2.DirectionMoveEcho(PlayerId, move.Dx, move.Dy, x, y, move.Flag != 0)];
         }
         if (InWorld && InstanceProtocolPoe2.ReadSetSkillSlot(message) is { } bind) return BindSlot(bind.Slot, bind.SkillId);
-        if (InWorld && InstanceSkillsPoe2.ReadUseSkill(message, out _) is { TargetId: { } target } use && SkillIds.Contains(use.SkillId))
+        if (InWorld && InstanceSkillsPoe2.ReadUseSkill(message, out _) is { TargetId: { } target } use &&
+            _player.Skills?.FirstOrDefault(s => s.Id == use.SkillId) is { } skill)
         {
             // An attack on an object waits for the server, as in PoE1: start it from where the player is; the action
             // walks into range itself.
+            CancelAttack(now);
             var (x, y) = Walk.Cell(now);
+            if (MonsterIndex(target) is int monster && AttackPoe2.Of(skill) is { } attack) BeginAttack(monster, attack, now);
             return [InstanceSkillsPoe2.ActionStarted(PlayerId, x, y, use.X, use.Y, use.SkillId, use.Flags, target)];
         }
         return [];
+    }
+
+    /// <summary>The share of the attack time at which a melee hit lands (its contact point).</summary>
+    public const double ContactPoint = 0.5;
+
+    // The attack in progress on a monster: the player walks from From (at Start) to Stop (at Arrive), and the hit lands
+    // at Hit.
+    private sealed record PendingAttack(int Monster, AttackPoe2 Attack, (int X, int Y) From, (int X, int Y) Stop,
+        double Start, double Arrive, double Hit);
+
+    private PendingAttack? _attack;
+    private double _attackFreeAt;
+
+    /// <summary>The current life of the area's i-th monster (0 once dead).</summary>
+    public int MonsterLife(int i) => _monsterLife[i];
+
+    private int? MonsterIndex(uint objectId)
+    {
+        long i = (long)objectId - MonsterId(0);
+        return i >= 0 && i < _monsters.Count && _monsterLife[i] > 0 ? (int)i : null;
+    }
+
+    // The player walks into reach of the monster (the client's action does it), then swings; a swing starts once the
+    // previous one has ended.
+    private void BeginAttack(int monster, AttackPoe2 attack, double now)
+    {
+        var from = Walk.Cell(now);
+        var m = _monsters[monster].Object;
+        double dx = m.GridX - from.X, dy = m.GridY - from.Y, distance = Math.Sqrt(dx * dx + dy * dy);
+        double walk = Math.Max(0, distance - attack.Range);
+        var stop = walk <= 0 ? from : ((int)Math.Round(from.X + dx * walk / distance), (int)Math.Round(from.Y + dy * walk / distance));
+        double arrive = now + walk / _walkSpeed, swing = Math.Max(arrive, _attackFreeAt), seconds = attack.AttackMs / 1000.0;
+        _attack = new(monster, attack, from, stop, now, arrive, swing + seconds * ContactPoint);
+        _attackFreeAt = swing + seconds;
+    }
+
+    // Drops the attack in progress, the walk estimate where the approach has brought the player by now.
+    private void CancelAttack(double now)
+    {
+        if (_attack is not { } a || now >= a.Hit) return;
+        double t = a.Arrive <= a.Start ? 1 : Math.Clamp((now - a.Start) / (a.Arrive - a.Start), 0, 1);
+        if (a.Stop != a.From)
+            Walk.Place((int)Math.Round(a.From.X + (a.Stop.X - a.From.X) * t), (int)Math.Round(a.From.Y + (a.Stop.Y - a.From.Y) * t), now);
+        _attack = null;
+        _attackFreeAt = Math.Min(_attackFreeAt, now);
+    }
+
+    // The hit of the attack in progress once it lands: a damage roll off the monster's life (S→C 0x1cf; at 0 the client
+    // runs the monster's death).
+    private IEnumerable<byte[]> AttackTick(double now)
+    {
+        if (_attack is not { } a || now < a.Hit) yield break;
+        _attack = null;
+        if (a.Stop != a.From) Walk.Place(a.Stop.X, a.Stop.Y, now);
+        if (_monsterLife[a.Monster] <= 0) yield break;
+        int damage = _random.Next(a.Attack.MinimumDamage, a.Attack.MaximumDamage + 1);
+        _monsterLife[a.Monster] = Math.Max(0, _monsterLife[a.Monster] - damage);
+        // At 0 the client stops refreshing the mini life bar (as PoE1): hide it.
+        if (_monsterLife[a.Monster] == 0)
+            yield return InstanceCombatPoe2.StatsUpdate(MonsterId(a.Monster), [(InstanceCombatPoe2.HideMiniLifeBar, 1)]);
+        yield return InstanceCombatPoe2.LifeUpdate(MonsterId(a.Monster), _monsterLife[a.Monster]);
     }
 
     // Skill bar: slot → skill id, as the client set it (C→S 0x5c).
@@ -130,20 +204,28 @@ public sealed class InstanceSessionPoe2
 
     private IEnumerable<uint> SkillIds => (_player.Skills ?? []).Select(s => s.Id);
 
-    /// <summary>The server's per-frame work at <paramref name="now"/>: the change area (0x2f1) when the walk reaches an
-    /// exit. Empty otherwise, and after the player has left.</summary>
+    /// <summary>The server's per-frame work at <paramref name="now"/>: the hit of an attack when it lands (0x1cf), and the
+    /// change area (0x2f1) when the walk reaches an exit. Empty otherwise, and after the player has left.</summary>
     public IReadOnlyList<byte[]> Tick(double now)
     {
         lock (_lock)
         {
-            if (!InWorld || LeavingBy is not null || _exits.Count == 0) return [];
-            var (x, y) = Walk.Cell(now);
-            var near = _exits.FirstOrDefault(e => Math.Abs(e.GridX - x) <= ExitReach && Math.Abs(e.GridY - y) <= ExitReach);
-            if (near is null) { _awayFromExits = true; return []; }
-            if (!_awayFromExits) return [];
-            LeavingBy = near;
-            return [InstanceProtocolPoe2.ChangeArea(near.DestinationHash16)];
+            if (!InWorld || LeavingBy is not null) return [];
+            var sent = AttackTick(now).ToList();
+            if (ExitTick(now) is { } change) sent.Add(change);
+            return sent;
         }
+    }
+
+    private byte[]? ExitTick(double now)
+    {
+        if (_exits.Count == 0) return null;
+        var (x, y) = Walk.Cell(now);
+        var near = _exits.FirstOrDefault(e => Math.Abs(e.GridX - x) <= ExitReach && Math.Abs(e.GridY - y) <= ExitReach);
+        if (near is null) { _awayFromExits = true; return null; }
+        if (!_awayFromExits) return null;
+        LeavingBy = near;
+        return InstanceProtocolPoe2.ChangeArea(near.DestinationHash16);
     }
 
     /// <summary>The local player (0x24), the player object (0x2f7), its inventories (0xdf), enter area (0x23) and the

@@ -39,7 +39,8 @@ public sealed record MonsterObjectPoe2(int GridX, int GridY, uint Life, IReadOnl
             switch (c)
             {
                 case "Positioned": w.I32(GridX).I32(GridY).F32(Rotation).U16(Team).U8(0).U8(0).U8(0); break;
-                case "Stats": w.Stats(null).U32(0).U8(0).U8(0); break;
+                // The life bar's maximum: maximum_life, as the player's (Poe2CharacterStats).
+                case "Stats": w.Stats([(Poe2CharacterStats.MaximumLife, (int)Life)]).U32(0).U8(0).U8(0); break;
                 case "ObjectMagicProperties": w.U16(0).U8(0).U8(0); break;
                 case "Buffs": w.U16(0); break;
                 case "Life":
@@ -68,8 +69,10 @@ public sealed record MonsterObjectPoe2(int GridX, int GridY, uint Life, IReadOnl
     private static void Pool(BlobWriter w, uint current) => w.U32(current).U32(0).U16(0).U32(0).U32(0);
 }
 
-/// <summary>A monster to create in an area: its MonsterVarieties Id and row, its level and its object.</summary>
-public sealed record Poe2Monster(string VarietyId, ushort Row, byte Level, MonsterObjectPoe2 Object)
+/// <summary>A monster to create in an area: its MonsterVarieties Id and row, its level and its object, and the variety's
+/// and level's combat values when the server has them.</summary>
+public sealed record Poe2Monster(string VarietyId, ushort Row, byte Level, MonsterObjectPoe2 Object,
+    World.Poe2Monsters.Variety? Variety = null, World.Poe2Monsters.LevelStats? LevelStats = null)
 {
     public string TypePath => MonsterObjectPoe2.TypePath(VarietyId, Level);
 }

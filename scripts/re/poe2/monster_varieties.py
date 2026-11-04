@@ -9,6 +9,11 @@ client deserializes for them (PORTING-POE2.md, wave 20).
 - The components: ot_components.py's merge of the .ot chain (Positioned first, then the sections parent-first, a name
   keeping its first place; client blocks are not deserialized), checked live on CourtGuardZombie (14 components).
 - The StateMachine's shared states: define_shared_state and PoE2's define_shared_checkpoint_state, in .ot order.
+- The variety's combat columns (dat.py): Name, LifeMultiplier, DamageMultiplier, ExperienceMultiplier (percent),
+  AttackSpeed (ms), Minimum/MaximumAttackDistance, MovementSpeed, ObjectSize (wave 22).
+
+It also writes data/poe2/default-monster-stats.json: DefaultMonsterStats by level (row = level - 1), the base life,
+damage, experience, accuracy, evasion and armour the variety's multipliers scale.
 
 Files come from the Steam bundles through scripts/re/poe2/steamdump and are cached in Tools/re/out/poe2.
 """
@@ -23,10 +28,16 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
 sys.path.insert(0, os.path.dirname(HERE))
 import ot_components  # noqa: E402  (parse and merge of .ot files)
+import dat  # noqa: E402  (.datc64 tables with the community schema)
 
 BUNDLES = sys.argv[1] if len(sys.argv) > 1 else r"G:\SteamLibrary\steamapps\common\Path of Exile 2\Bundles2"
 CACHE = os.path.join(REPO, "Tools", "re", "out", "poe2")
 OUT = os.path.join(REPO, "data", "poe2", "monster-varieties.json")
+LEVELS_OUT = os.path.join(REPO, "data", "poe2", "default-monster-stats.json")
+COMBAT = ["Name", "LifeMultiplier", "DamageMultiplier", "ExperienceMultiplier", "AttackSpeed", "MinimumAttackDistance",
+          "MaximumAttackDistance", "MovementSpeed", "ObjectSize"]
+LEVEL_FIELDS = {"MonsterLife": "life", "Damage": "damage", "Experience": "experience", "Accuracy": "accuracy",
+                "Evasion": "evasion", "Armour": "armour"}
 VARIETIES = "Data/Balance/MonsterVarieties.datc64"
 ROW_SIZE, ID, BASE_TYPE = 1030, 0, 72
 
@@ -88,6 +99,7 @@ def main():
     table = varieties()
     wanted = [t for t in placed if t in table]
     files = load([table[t][1] for t in wanted])
+    columns = dat.table("MonsterVarieties")
     rows = []
     for t in wanted:
         row, base = table[t]
@@ -99,12 +111,17 @@ def main():
             print(f"{t}: shared timers {m['shared_timers']} not written", file=sys.stderr)
             continue
         rows.append({"id": t, "row": row, "components": m["components"][:m["read"]],
-                     "sharedStates": [name for name, _ in m["shared_states"]]})
+                     "sharedStates": [name for name, _ in m["shared_states"]],
+                     **{k[0].lower() + k[1:]: columns[row][k] for k in COMBAT}})
         print(f"{t} (row {row}, {base}): {len(rows[-1]['components'])} components", file=sys.stderr)
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(OUT, "w", encoding="utf-8") as f:
         f.write("[\n" + ",\n".join(" " + json.dumps(r, separators=(",", ":")) for r in rows) + "\n]\n")
     print(f"{len(rows)} varieties -> {OUT}", file=sys.stderr)
+    levels = [{"level": i + 1, **{v: r[k] for k, v in LEVEL_FIELDS.items()}} for i, r in enumerate(dat.table("DefaultMonsterStats"))]
+    with open(LEVELS_OUT, "w", encoding="utf-8") as f:
+        f.write("[\n" + ",\n".join(" " + json.dumps(r, separators=(",", ":")) for r in levels) + "\n]\n")
+    print(f"{len(levels)} levels -> {LEVELS_OUT}", file=sys.stderr)
 
 
 if __name__ == "__main__":
