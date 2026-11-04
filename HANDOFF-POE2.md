@@ -4,7 +4,9 @@ Read this first if you are picking up the PoE2 work. It covers where things stan
 from nothing, how to run a live test, and what to do next. The wave-by-wave findings (addresses, message layouts,
 live results) are in [PORTING-POE2.md](PORTING-POE2.md). This file points into it and does not repeat it.
 
-Last updated 2026-11-04, during wave 27 (NPCs, waypoints, quests): committed as work in progress; see "Wave 27 in progress" below.
+Last updated 2026-11-04, after wave 27 (NPCs, dialogue, quest flags, waypoints). Its second half (quest flags, NPC
+states, waypoint activation and travel) is covered by unit tests only: see "Wave 27 follow-ups" below for the live
+checks to make.
 
 ## Where it stands
 
@@ -15,7 +17,9 @@ and inventories, the area is drawn, and the player walks. The server's estimate 
 walls. Walking into the camp's gate takes the player to Clearfell, and its exit back returns to the camp. Clearfell's
 monsters chase the player and hit it. The player has Punch and the dodge roll on its skill bar; Punch on a monster
 walks the player to it and punches; the monster loses life and dies, and the kill gives experience (the level is saved).
-At 0 life the player dies, gets the death screen and can resurrect at the area's arrival point.
+At 0 life the player dies, gets the death screen and can resurrect at the area's arrival point. The camp's NPCs,
+waypoint, stash and well are there; an NPC's dialogue plays its talks and sets the character's quest flags, which
+are saved and drive the NPCs' states; the waypoint opens the World panel and travels to an activated waypoint.
 
 | Part | State | Where |
 |---|---|---|
@@ -36,9 +40,9 @@ At 0 life the player dies, gets the death screen and can resurrect at the area's
 | Experience, levels | A kill's experience in the Player component (`0x2f9`); a new level raises and refills life and mana and is saved to Auth. The experience into a level is not saved | `InstanceSessionPoe2.Experience.cs`, `InstanceProgressionPoe2.cs`, `scripts/re/poe2/experience_levels.py`; wave 24 |
 | Drops, pickup | A kill may drop currency on the ground (`0x2f7` WorldItem, 35 % or `Game_POE2_DROP_CHANCE`); a click walks to it and puts it in the main inventory (`0x2fa`, `0xde`). The inventory is not saved | `InstanceSessionPoe2.Loot.cs`, `Poe2Inventory.cs`, `Poe2Items.cs`, `scripts/re/poe2/item_types.py`; wave 25 |
 | Starting weapon | The class's starting weapon in the main hand (`0xde` into Weapon1), drawn on the model, usable (Mods `+0x263` = 7) and swung with Default Attack at the weapon's values; monster damage scaled to 50 % (`Game_POE2_MONSTER_DAMAGE`). The weapon's own attack (Mace Strike) stays greyed; equipment is not saved | `Poe2StartingSkills.cs`, `InstanceSessionPoe2.Loot.cs`, `InstanceItems.cs`, `PlayerObjectPoe2.cs`, `Poe2Items.cs`; wave 26 |
-| NPCs, waypoint (wave 27, in progress) | The town's NPCs, waypoint, stash and well are drawn; a click on an NPC opens its dialogue, its options play their talks, Buy opens an empty buy window; a click on the waypoint opens the World panel. No quest flags, no shop stock, no travel | `ServerObjectPoe2.cs`, `Poe2ServerObjects.cs`, `InstanceSessionPoe2.Npcs.cs`, `InstanceNpcsPoe2.cs`, `InstanceWaypointsPoe2.cs`, `scripts/re/poe2/server_objects.py`; wave 27 |
+| NPCs, dialogue, quest flags, waypoints | The town's NPCs, waypoint, stash and well are drawn; a click on an NPC opens its dialogue (`0xa3`), its options (`0xa1` / `0xa4`) set the quest flags (start, finish and Script flags) and play their talks, Buy opens an empty buy window (`0xaf`). The flags are saved per character (Auth), sent as a Player update (`0x2f9`) and recompute the NPCs' states (objects created again). The waypoint activates (town, click, 25 cells; `0x5a`), opens the World panel (`0x98`) and travels (`0x5b` → `0x2f1`, arrival by the waypoint). No shop stock; the second half is untested live | `ServerObjectPoe2.cs`, `Poe2ServerObjects.cs`, `Poe2Quests.cs`, `InstanceSessionPoe2.Npcs.cs`, `InstanceSessionPoe2.Quests.cs`, `InstanceNpcsPoe2.cs`, `InstanceQuestsPoe2.cs`, `InstanceWaypointsPoe2.cs`, `scripts/re/poe2/server_objects.py`, `quests.py`; wave 27 |
 
-**Tests.** 643/643 pass:
+**Tests.** 679/679 pass:
 
 ```bash
 dotnet test tests/GameServer.Core.Tests -c Release
@@ -64,6 +68,9 @@ dotnet test tests/GameServer.Core.Tests -c Release
 - **Server:** `src/GameServer.Gateway/Program.Poe2.cs` (branches off before the PoE1 startup) and
   `src/GameServer.Gateway/AreaLayouts.cs` (`LoadCells`, walk maps).
 - **Tests:** `tests/GameServer.Core.Tests/*Poe2Tests.cs`, `DirectionWalkTests.cs`.
+- **Quest state:** `Character.QuestFlags` / `Waypoints` in `src/GameServer.Core/Accounts/Models.cs`, the
+  `set_quest_flags` / `set_waypoints` control ops (`InstanceControl.cs`, `InstanceDirectory.cs`), the tables in
+  `src/GameServer.Core/World/Poe2Quests.cs`.
 - **Live-test tools (added with this handoff):**
   - `scripts/dev/poe2-login-harness/`: the PoE2 login stand-in. It answers the handshake, token login, character
     list and Play, and sends the client to the Gateway on 6112.
@@ -148,7 +155,14 @@ Once per machine. Everything generated here lives in `data/`, which git ignores.
     ```bash
     python scripts/re/poe2/server_objects.py
     ```
-    - It exists here (21 types). Rerun it after capturing a new area.
+    - It exists here (21 types). Rerun it after capturing a new area, and after wave 27 (its `talk` entries became
+      objects with the options' flags; an older file does not load).
+11. **Quest tables** (wave 27). Without `data/poe2/quests.json` the quest flags are kept but never sent to the client,
+    and the World panel knows no waypoint (the Gateway logs it):
+    ```bash
+    python scripts/re/poe2/quests.py
+    ```
+    - It exists here (6252 flags, 103 waypoint areas, 274 areas with entry flags).
 
 ## Running a live test
 
@@ -259,74 +273,35 @@ This is the method used for waves 4–14, so the next wave does not start from z
    - Record the result in a new wave section of PORTING-POE2.md, with addresses, layout and live result.
    - Add tests for every encoder and decoder in `tests/GameServer.Core.Tests`.
 
-## Wave 27 in progress (NPCs, waypoints, quests)
+## Wave 27 follow-ups (NPCs, dialogue, quest flags, waypoints)
 
-Started and tested live on 2026-11-04, committed as work in progress (the wave 27 commit below); finishing it amends nothing, add the rest on top. Build passes; the 643 Core
-tests pass, but none covers wave 27 yet. PORTING-POE2.md has no wave 27 section yet; the findings are below.
+The findings are in PORTING-POE2.md, wave 27. The first half (server objects, the dialogue, its talks, the empty buy
+window, the World panel) was tested live on 2026-11-04; the second half (quest flags, NPC states, waypoint activation
+and travel) was mapped in the binary and is covered by unit tests only.
 
-**Works live (Clearfell Encampment):**
-- **Server objects.** 19 objects of 21 types are created with `0x2f7` after the monsters (ids
-  `ServerObjectId(i) = MonsterId(monster count) + i`; dropped items come after them). Every blob is read exactly by
-  the client. The minimap shows Finn, Stash, Una, the well and the waypoint; Una has her quest marker.
-  - Only types with InteractionAction are sent (`server_objects.py`): an unknown type crashes the client (type
-    lookup `0x141693840`), and DogTrader_Entrance and the townspeople are the client's own.
-  - Blob per component: see `ServerObjectPoe2.cs` (Positioned 17 bytes, Animated, InteractionAction u8 0, NPC u8 1
-    u8 0xff (reader `0x141d96820`), MinimapIcon u8 2, Stats 7 bytes, Transitionable, StateMachine (count, 0 timers,
-    per state compact value + u8 2), HideoutDoodad 0 bytes in town).
-  - The town places every variant of an NPC (Una, UnaAfterIronCount, ...). Their StateMachine `visible` state comes
-    from the .ot defaults and `per_player_quest_flag_state_<state>_<value> = "Flag"` rules (`Poe2ServerObjects.States`).
-- **Talking.** A click on an NPC sends C→S `0x1a5` with action `0xc266` and the NPC as target. The server echoes
-  `0x1c8`, walks the estimate to `TalkReach` (6 cells), then sends **S→C `0xa3`**: PoE1's `0x84`. It holds the object
-  header (NPC id), u8 mode (0xff = option list) and u8 player slot (the player's `+0x181`, 0 here).
-  - Path: world handler `0x1421343c0`, case `0x1421349ed`, then `0x1421065a0(player, id, mode)`. Id 0 ends the
-    dialogue; the dialogue state is at `+0x8150`, the NPC id at `+0x8154`.
-- **Options.** C→S **`0xa1`** (4 bytes: route, option index = NPCTalk column `_1`) and **`0xa4`** (3 bytes,
-  Goodbye), which are PoE1's `0x82` / `0x85`.
-  - An option of category BuyItems sends **S→C `0xaf`**, PoE1's `0x8c` buy window, empty.
-  - Any other option sends `0xa3` with the index as mode: the talk plays (Introduction, Clearfell, Secrets in the
-    Dark tested).
-  - `0xa4` after a talk sends `0xa3` 0xff (back to the options); otherwise `0xa3` with id 0 (end).
-  - Categories come from `server-objects.json` `talk` ([index, NPCTalkCategory Id]).
-- **Waypoint.** A click walks there, then sends **S→C `0x98`** kind 0 (PoE1's `0x7b` OpenUi with the route byte;
-  reader `0x142155300`). The World panel opens.
+**Live checks to make** (Clearfell Encampment, `Game_POE2_TRACE=1` on the Gateway):
+- On entering: the Gateway logs the character's flags and waypoints, then sends `0x2f9` and `0x5a` after the
+  objects. The waypoint should be lit; the World panel should show the camp's pin lit.
+- Una's Introduction: `0x2f9` with `UnaIntroduced` and the talk; the Gateway logs "quest flags saved"; after a
+  relog the option list is built for the new flags (Introduction gone or unhighlighted).
+- "Home" gossip: available only once Clearfell was visited (`Visited-G1_2`).
+- Clearfell: walk up to its waypoint (25 cells) or click it: `0x5a` with bit 1 and the activation animation; then
+  the town's pin on the panel; a click on it: `0x5b` in the trace, `0x2f1`, the arrival by the town's waypoint.
+- A flag that changes an NPC's state (`Use Ring` needs the ring; none is reachable yet): the object is removed and
+  created again. Watch for a client complaint on the re-creation of an NPC.
 
-**Missing (wave 27 scope):**
-1. **Quest flags.** They are always empty: `Program.Poe2.cs` passes `new HashSet<string>()`. Needed next:
-   - storage per character;
-   - the PoE2 message that sets them (PoE1's SetQuestFlags; id unknown);
-   - running the NPCTalk side effects (`QuestFlags1`, `Script` such as `SetQuestFlag(...)`,
-     `triggerer.FinishNPCChat()`);
-   - redoing the NPC states when a flag changes.
-2. **Waypoint travel.**
-   - The panel opens with no unlocked waypoints: PoE1's `0x4c` bitset is not mapped in PoE2.
-   - The pick (PoE1's C→S `0x4d`) is not handled.
-   - The town waypoint is never activated.
-3. **The shop.**
-   - `0xaf` sends no stock. Its line list (u16 n + n × u32) and its 0x38-byte tab elements (reader
-     `0x142175980`) are unread.
-   - No NPCShop data, no buy or sell transaction.
-   - SellItems ("Disenchant Items") and QuestReward options do nothing; Music options are untested.
-4. **Other objects.** A click on the stash, the guild stash or the healing well does nothing (`IsUsable` is NPCs and
-   the waypoint only). RenlyIntro is left out: its ControlZone component is not supported.
-5. **Tests and docs.**
-   - Unit tests: `ServerObjectPoe2.Blob`, `Poe2ServerObjects.States/InArea/TalkCategories`, `InstanceNpcsPoe2`
-     (`Talk`, `ShopWindow`, `ReadChooseTalk`, `IsCloseTalk`), `InstanceWaypointsPoe2.OpenUi`, and the session (click →
-     walk → `0xa3`, `0xa1` → talk or shop, `0xa4`, waypoint → `0x98`).
-   - A PORTING-POE2.md wave 27 section, from this list.
-   - Then the commit (explicit paths; see `git status`: `scripts/re/ot_components.py`,
-     `scripts/re/poe2/server_objects.py`, the new and edited `src/GameServer.Core/...Poe2*.cs` /
-     `World/Poe2ServerObjects.cs`, `src/GameServer.Gateway/Program.Poe2.cs`, the docs).
+**Left out (wave 27 scope):**
+- The shop (Next steps 7). QuestReward and SellItems options do nothing; Music options end the dialogue.
+- A click on the stash, the guild stash or the healing well does nothing (`IsUsable` is NPCs and the waypoint
+  only). RenlyIntro is left out: its ControlZone component is not supported.
+- The Script's `ForceInteractWithNPC` (Una's "The Seed" opens the Hooded One's dialogue) and delays are ignored.
 
 **Known issues:**
 - `TalkReach` 6 is a guess (NPC.ot `object_size` 5 + 1). The approach is a straight line, so it can stop on a wall.
-- The dialogue state (`_talkingTo`) is not cleared when the player walks away or changes area. What the client sends
-  then is not checked.
+- The dialogue state (`_talkingTo`) is not cleared when the player walks away. What the client sends then is not
+  checked.
 - Every click on the waypoint resends `0x98`.
-
-**Ruled out (do not retry):**
-- `0x87` (reader `0x142154aa0`: u8, u32, u8, a 17-byte block): read and ignored, with any mode. Its 6-byte PoE1
-  layout made the client stop ("Unable to deserialise packet with pid 62466").
-- `0xda`: the trade close (listener `0x140de08d0`). It crashes at `0x140de0a90` on an empty trade list.
+- Travel with Ctrl (PoE1's instance chooser) travels like a plain click.
 
 **RE notes for what is left:**
 - The world handler `0x1421343c0` has special cases `0xa3`, `0x181`, `0x1f2`, `0x1f3`, `0x1fd`, `0x1fe`, `0x2ba`,
@@ -336,8 +311,11 @@ tests pass, but none covers wave 27 yet. PORTING-POE2.md has no wave 27 section 
   Its direct callers are the object-message readers.
 - `NPCDialogueWindow` is named at `0x1405f3050`. `0x1405f1280` builds a conversation and logs "0-step empty
   conversation".
-- `scripts/re/poe2/dat.py NPCTalk` / `NPCTalkCategory` / `NPCs` read the dialogue data. PoE2 categories: 3 Gossip,
-  6 Quests, 7 QuestReward, 12 BuyItems, 13 SellItems, 21 Music.
+- `scripts/re/poe2/dat.py NPCTalk` / `NPCTalkCategory` / `NPCs` / `QuestFlags` / `WorldAreas` read the dialogue and
+  quest data. PoE2 categories: 3 Gossip, 6 Quests, 7 QuestReward, 12 BuyItems, 13 SellItems, 21 Music.
+- `scripts/re/poe2/msg_sigs.py` and `world_sigs.py` list every S→C reader's field signature: that is how `0x5a`
+  (u8, u32, 22 bytes) was found. C→S writers start with `movzx ecx, word ptr [rcx+8]; call htons` and write with
+  `0x142197fb0` (raw) / `0x141cfc050` (u32); their classes are built by `0x14211fa00` callers that store the id.
 - `Game_POE2_TRACE=1` on the Gateway logs every C→S chunk and S→C id.
 
 ## Next steps
@@ -367,8 +345,11 @@ In rough order. Each is a wave of its own.
 
    Also open: the exit click, the town gates not drawn, C→S `0x362`.
 6. **Combat** (waves 21–24 did the skills, the attack, hits, monster death, monster AI, the player's death and
-   experience, waves 25–26 drops and the starting weapon): monster pathing (the chase glides through walls), PoE2's monster damage rule. Then items, gems, passives, NPCs, waypoints and quests. PoE1's
+   experience, waves 25–26 drops and the starting weapon): monster pathing (the chase glides through walls), PoE2's monster damage rule. Then items, gems, passives and quests. PoE1's
    Gateway is the template; re-verify every id against PoE2.
+7. **The shop** (left out of wave 27): `0xaf`'s stock (its line list u16 n + n × u32 and its 0x38-byte tab elements,
+   reader `0x142175980`), NPCShop data, buy and sell transactions, SellItems ("Disenchant Items") and QuestReward
+   options. PoE1's `Program.Npcs.cs` and `NpcShops.cs` are the template.
 
 ## Wave index
 
@@ -401,4 +382,4 @@ In rough order. Each is a wave of its own.
 | 24 | Experience | `d078b42` |
 | 25 | Monster drops, the pickup | `199bdc1` |
 | 26 | The starting weapon | `13f1f9a` |
-| 27 | NPCs, dialogue, waypoint panel (in progress) | the commit after `13f1f9a` |
+| 27 | NPCs, dialogue, quest flags, waypoints | `910c0b3` (first half) and the commit after it |

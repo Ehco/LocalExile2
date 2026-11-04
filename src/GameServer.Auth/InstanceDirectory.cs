@@ -148,17 +148,19 @@ sealed class InstanceDirectory(InstanceRegistry registry, AccountService? accoun
                 if (inst is { IsTown: true } && _towns.FirstOrDefault(t => t.Hash16 == inst.AreaHash) is { Id: { } town }
                     && accounts?.SetLastTown(info.Character, town) is { Ok: true })
                     Console.WriteLine($"[auth] {info.Character}: last town {town}");
+                var character = accounts?.FindCharacter(info.Character);
                 return new ControlResponse
                 {
                     Ok = inst is not null, Error = inst is null ? "instance expired" : null, Area = info.Area,
                     Seed = inst?.Seed ?? 0, Instance = info.Instance, Created = inst?.Created.ToUnixTimeMilliseconds() ?? 0, IsTown = inst?.IsTown ?? false, Character = info.Character,
                     CharacterId = info.CharacterId,
-                    Account = accounts?.FindCharacter(info.Character) is { } owner ? accounts.GetAccount(owner.AccountId)?.Name : null,
+                    Account = character is { } owner ? accounts!.GetAccount(owner.AccountId)?.Name : null,
                     League = info.League?.Name, Hardcore = info.League?.Hardcore ?? false,
                     Ssf = info.League?.Ssf ?? false, Ruthless = info.League?.Ruthless ?? false,
                     Class = (int)info.Class, Level = info.Level,
-                    LastTown = accounts?.FindCharacter(info.Character)?.LastTown is { } last
+                    LastTown = character?.LastTown is { } last
                         && _towns.FirstOrDefault(t => t.Id == last) is { Id: not null } known ? known.Hash16 : (ushort)0,
+                    QuestFlags = [.. character?.QuestFlags ?? []], Waypoints = [.. character?.Waypoints ?? []],
                 };
             }
             case "list":
@@ -205,6 +207,16 @@ sealed class InstanceDirectory(InstanceRegistry registry, AccountService? accoun
                 var r = accounts.SetPortrait(info.Character, req.Portrait);
                 if (!r.Ok) return new ControlResponse { Ok = false, Error = r.Error.ToString() };
                 Console.WriteLine($"[auth] {info.Character}: portrait {req.Portrait}");
+                return new ControlResponse { Ok = true, Character = info.Character };
+            }
+            case "set_quest_flags":
+            case "set_waypoints":
+            {
+                if (accounts is null) return new ControlResponse { Ok = false, Error = "no account store" };
+                var list = req.Flags ?? [];
+                var r = req.Op == "set_quest_flags" ? accounts.SetQuestFlags(info.Character, list) : accounts.SetWaypoints(info.Character, list);
+                if (!r.Ok) return new ControlResponse { Ok = false, Error = r.Error.ToString() };
+                Console.WriteLine($"[auth] {info.Character}: {(req.Op == "set_quest_flags" ? "quest flags" : "waypoints")} {list.Count}");
                 return new ControlResponse { Ok = true, Character = info.Character };
             }
             case "leave":

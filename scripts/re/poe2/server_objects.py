@@ -14,8 +14,11 @@ that drive their shared states (PORTING-POE2.md, wave 27).
 - The StateMachine's shared states with their .ot defaults, and PoE2's per_player_quest_flag_state_<state>_<value> =
   "Flag" rules: the server sets the state to the value when the player has the flag (Renly's "visible" goes to 0 with
   IronCountKilled, the injured Hooded One's to 1 with TreeOfSoulsMentorReleased).
-- The NPC's dialogue options: [index, NPCTalkCategory Id] per NPCTalk row of the NPCs row with the type's Id. The client
-  sends the index (C→S 0xa1) and the server answers by category (BuyItems opens the buy window).
+- The NPC's dialogue options, one per NPCTalk row of the NPCs row with the type's Id: index (what C→S 0xa1 sends),
+  category (NPCTalkCategory Id: BuyItems opens the buy window), requires / excludes (the QuestFlags Ids of columns _3 /
+  _4, PoE1's QuestFlag1 / QuestFlag2: the client offers the option when the player has all of the first and none of the
+  second), start (QuestFlags1, set when the option is picked), finish (QuestFlag2, set after its talk; NEVER_SET is
+  none) and the row's Script (SetQuestFlag(...) sets more flags; triggerer.FinishNPCChat() ends the dialogue at once).
 
 Files come from the Steam bundles through scripts/re/poe2/steamdump and are cached in Tools/re/out/poe2.
 """

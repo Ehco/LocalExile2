@@ -15,9 +15,12 @@ namespace GameServer.Core.Protocol.Instance;
 /// HUD's maximums show them.</param>
 /// <param name="Skills">The Actor's granted skills (<see cref="ActorSkillsPoe2"/>): the skill bar offers them.</param>
 /// <param name="Visible">What the model wears, by visual slot (<see cref="Login.CharacterPreviewPoe2"/>).</param>
+/// <param name="QuestFlags">The character's quest flags (QuestFlags rows) in the Player component's first flag set
+/// (<see cref="InstanceQuestsPoe2"/>); the session sends them again with 0x2f9 anyway.</param>
 public sealed record PlayerObjectPoe2(int GridX, int GridY, uint Life, uint EnergyShield = 0, uint Mana = 0,
     string Name = "", byte ClassRow = 1, uint Experience = 0, IReadOnlyList<(uint Key, int Value)>? Stats = null,
-    IReadOnlyList<GrantedSkillPoe2>? Skills = null, IReadOnlyList<VisibleItem>? Visible = null)
+    IReadOnlyList<GrantedSkillPoe2>? Skills = null, IReadOnlyList<VisibleItem>? Visible = null,
+    IReadOnlyCollection<int>? QuestFlags = null)
 {
     /// <summary>The blob's length with an empty name, no skills and nothing worn; each name character adds two bytes.</summary>
     public const int BlobLength = 242;
@@ -51,7 +54,10 @@ public sealed record PlayerObjectPoe2(int GridX, int GridY, uint Life, uint Ener
         // bytes +0x278, two u16 dat keys (+0x280, +0x290), u8 flags (bits 0-3), u8 +0x205, u8 +0x3e7, u8 count of u32,
         // u8 count (0x141deecb0). 35 bytes after an empty name.
         w.WStr32(Name).U8(ClassRow).U32(Experience);
-        w.Zeros(30);
+        w.Zeros(12);
+        InstanceQuestsPoe2.WriteFlagSet(w, QuestFlags ?? []);   // the quest flags (wave 27); the second set stays empty
+        w.U16(0);
+        w.Zeros(14);
         // Inventories (vtable 0x1434c8c38, read 0x141d82bc0): u8 count of (u8 visual slot, the character screen's
         // record 0x1426c41a0), then a u8 count of a second list (none).
         w.U8((byte)(Visible?.Count ?? 0));

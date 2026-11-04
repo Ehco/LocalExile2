@@ -1752,3 +1752,146 @@ Limits:
 - The weapon is given again at each entry; equipment is not saved and cannot be
   moved.
 - The weapon's own basic attack (Mace Strike etc.) is not usable.
+
+## Wave 27 — NPCs, dialogue, quest flags and waypoints (2026-11-04)
+
+The town's NPCs, waypoint, stash and well exist; a click on an NPC opens its
+dialogue and its options set the character's quest flags, which the client
+keeps and the NPCs' states follow; the waypoint activates, opens the World panel
+and travels. Code: `ServerObjectPoe2.cs`, `Poe2ServerObjects.cs`,
+`InstanceNpcsPoe2.cs`, `InstanceQuestsPoe2.cs`, `InstanceWaypointsPoe2.cs`,
+`Poe2Quests.cs`, `InstanceSessionPoe2.Npcs.cs`, `InstanceSessionPoe2.Quests.cs`,
+`Program.Poe2.cs`, `InstanceDirectory.cs`, `scripts/re/poe2/server_objects.py`,
+`scripts/re/poe2/quests.py`.
+
+- **Server objects.** `scripts/re/poe2/server_objects.py` writes
+  `data/poe2/server-objects.json`: the types the captures place under
+  `Metadata/NPC/` and `Metadata/MiscellaneousObjects/` with an
+  InteractionAction (21 in Clearfell Encampment), their .ot components
+  (`ot_components.py`), StateMachine shared states and defaults, the
+  `per_player_quest_flag_state_<state>_<value> = "Flag"` rules, and the
+  NPCTalk rows of the type's NPCs row.
+  - 19 objects are created with `0x2f7` after the monsters
+    (`ServerObjectId(i) = MonsterId(monster count) + i`; dropped items come
+    after them). Every blob is read exactly. The minimap shows Finn, Stash,
+    Una, the well and the waypoint; Una has her quest marker.
+  - An unknown type crashes the client (type lookup `0x141693840`):
+    DogTrader_Entrance (extends "nothing") and the townspeople (Doodads) are
+    the client's own and are not sent.
+  - Blob per component (`ServerObjectPoe2.Blob`): Positioned 17 bytes,
+    Animated (u8 1 + WStr32 .ao), InteractionAction u8 0, NPC u8 1 u8 0xff
+    (reader `0x141d96820`), MinimapIcon u8 2, Stats 7 bytes, Transitionable
+    u8, StateMachine (u8 count, u8 0 timers, per state compact value + u8 2),
+    BaseEvents / Pathfinding / Functions nothing, HideoutDoodad nothing
+    outside a hideout.
+  - The town places every variant of an NPC (Una, UnaAfterIronCount, ...);
+    the `visible` state of each follows the player's flags, so the client
+    shows the one for its progress.
+- **Talking.** A click on an NPC is C→S `0x1a5` with skill `0x2000C266` and
+  the NPC as target (as a pickup). The server echoes `0x1c8`, walks the
+  estimate to `TalkReach` (6 cells), then sends **S→C `0xa3`**: PoE1's `0x84`.
+  Object header (the NPC), u8 mode (0xff = the option list), u8 player slot
+  (the local player's `+0x181`, 0).
+  - World handler `0x1421343c0`, case `0x1421349ed`, then
+    `0x1421065a0(player, id, mode)`. Id 0 ends the dialogue; the dialogue
+    state is at `+0x8150`, the NPC id at `+0x8154`.
+  - The client builds the option list itself from NPCTalk and the player's
+    quest flags: an option needs all of its column `_3` flags and none of its
+    `_4` flags (PoE1's QuestFlag1 / QuestFlag2). That is why the flags must
+    reach the client.
+- **Options.** C→S **`0xa1`** (4 bytes: route, NPCTalk column `_1`, the
+  option's index among the NPC's rows) and **`0xa4`** (3 bytes: Goodbye, Esc,
+  or Continue at the end of a talk), PoE1's `0x82` / `0x85`.
+  - BuyItems answers **S→C `0xaf`**, PoE1's `0x8c` buy window, still empty.
+  - Any other option sets its start flags (`QuestFlags1`, and the Script's
+    `SetQuestFlag(...)`, delays ignored), then plays its talk: `0xa3` with the
+    index as mode. `0xa4` then sets the finish flag (`QuestFlag2`; `NEVER_SET`
+    is none) and sends `0xa3` 0xff (back to the options); `0xa4` on the option
+    list sends `0xa3` with id 0 (end).
+  - A Script with `triggerer.FinishNPCChat()` ends the dialogue at once (`0xa3`
+    id 0) and sets both flag columns (Una's "Use Ring", the Music options).
+  - The server refuses an option the flags exclude. Without the table's row
+    it plays the talk anyway.
+- **Quest flags.** PoE2 has no message of its own, as PoE1 has none: the set
+  goes in a Player component update, **S→C `0x2f9`** component 6
+  (`InstanceQuestsPoe2.PlayerQuestFlags`), u16 LE flags bit 1 (`0x0002`), then
+  the whole set. Reader `0x141dd0b90` (wave 24's) takes the set into a
+  temporary and hands it to the setter `0x141dd2ad0`; bit 3 is the second set
+  (`+0x260`), the high byte's bit 0 five raw bytes (`+0x278`).
+  - A flag set (`0x141deebf0`, PoE1's `0x141e83340`): u16 LE block count,
+    then per block u8 block (row >> 6) and u64 LE bits. A flag is a
+    QuestFlags.datc64 row (6252 in 0.5.5e). The creation blob carries the two
+    sets after the experience and four scalars (`PlayerObjectPoe2.QuestFlags`);
+    the session sends the first again anyway, after the area's objects.
+  - Storage: Auth's account store, on the PoE2 character (`Character.QuestFlags`,
+    `Waypoints`): control ops `set_quest_flags` / `set_waypoints` (the whole
+    list) and both lists in `resolve`. The Gateway saves at each change.
+  - Entering an area sets its WorldAreas `FlagOnEntered` flags
+    (`Visited-G1_town`, `Visited-G1_2`): Una's "Home" gossip needs
+    `Visited-G1_2`.
+  - When a flag changes an NPC's states, the object is removed (`0x2fa`) and
+    created again (`0x2f7`) with the new states; the NPC whose dialogue is
+    open waits for the dialogue's end.
+  - `scripts/re/poe2/quests.py` writes `data/poe2/quests.json`: the flag Ids in
+    row order, the waypoint areas (below) and each area's entry flags.
+- **Waypoints.** The character's activated waypoints are **S→C `0x5a`**
+  (class `0x142153b40`, reader `0x142153c00`), PoE1's `0x4c` with the route
+  byte: u8 route, u32 BE, 22 raw bytes.
+  - The instance dispatcher (`0x1421220f0`, switch base 0xd, byte table
+    `0x14212593c`) case `0x142123878` copies the 22 bytes to instance
+    `+0x2318`, calls the listeners at `+0xff0` with the u32 and the bitset,
+    and compares the current area's bit before and after (`0x141f68b30`):
+    turned on by a later `0x5a`, the client plays the waypoint's activation
+    (`0x142121fe0`, state 2). Areas of the kinds in mask `0x4109008`
+    (`0x141f68d10`) count as always on.
+  - Bit order (`0x141f68930`, built once, at most 0xaf = 175 entries): the
+    WorldAreas rows (stride 0x2e0) with HasWaypoint (`+0x15`) whose `+0x1b4`
+    is 1 (a town), 2 (an area) or 31; column `_45` of the extracted table.
+    0.5.5e has 103: G1_town bit 0, G1_2 bit 1, G1_4 bit 2 ...
+  - The server activates a town's waypoint on arrival and any waypoint on a
+    click or within 25 cells (PoE1's rules), saves the list and sends `0x5a`
+    again.
+  - A click on the waypoint then sends **S→C `0x98`** kind 0 (PoE1's `0x7b`
+    OpenUi with the route byte; reader `0x142155300`), its first u32 the
+    waypoint object: the World panel opens.
+  - A pin sends **C→S `0x5b`** (10 bytes; sender `0x142110920`, vtable
+    `0x1434e6548`, writer `0x141f396f0`, from the pin click `0x140bb4a70`):
+    u8 route, u16 BE destination HASH16 (the pin's WorldAreas row `+0x2a`),
+    u32 BE (the panel's `+0x340`, the waypoint `0x98` named), u8 Ctrl. PoE1's
+    `0x4d`.
+  - The server checks the destination's waypoint is activated and not this
+    area's, then changes area as for an exit (`0x2f1`, the `0x29` transfer);
+    the new connection arrives 8–20 cells from the destination's waypoint
+    object (`Poe2Areas.WaypointArrival`; `CameFrom` remembers `ByWaypoint`).
+    Ctrl (PoE1's instance chooser) travels too.
+
+**Live test (2026-11-04, the first half).** In Clearfell Encampment the 19
+objects appeared with their minimap icons; a click on Una opened her dialogue;
+Introduction, Clearfell and Secrets in the Dark played; Buy or Sell items
+opened an empty buy window; Goodbye closed it; a click on the waypoint opened
+the World panel (with no pin lit). The quest flags, the NPC states after a
+flag, the waypoint activation and the travel were written afterwards from the
+binary and are covered by unit tests only.
+
+Ruled out (do not retry):
+- `0x87` (reader `0x142154aa0`: u8, u32, u8, a 17-byte block) as the talk
+  message: read and ignored with any mode; its 6-byte PoE1 layout stopped the
+  client ("Unable to deserialise packet with pid 62466").
+- `0xda` as the buy window: the trade close (listener `0x140de08d0`), which
+  crashes at `0x140de0a90` on an empty trade list.
+
+Limits:
+- No shop: `0xaf` sends no stock (its line list u16 n + n × u32 and its
+  0x38-byte tabs, reader `0x142175980`, are unread), no NPCShop data, no buy,
+  sell or Disenchant. QuestReward options do nothing; Music options end the
+  dialogue (their `Script2` interlude is the client's). Left for a wave of
+  its own.
+- The Script's `ForceInteractWithNPC`, `DirtyTransition` and delays are
+  ignored; `DirtyStateMachine` is covered by the state recomputation.
+- A click on the stash, the guild stash or the healing well does nothing.
+  RenlyIntro's ControlZone component is not written.
+- `TalkReach` 6 is a guess (NPC.ot `object_size` 5 + 1); the approach is a
+  straight line and can stop on a wall. The dialogue state is not cleared
+  when the player walks away. Every click on the waypoint resends `0x98`.
+- Travel is possible between the areas with a capture only (the town and
+  Clearfell); the destination's waypoint must have been activated.

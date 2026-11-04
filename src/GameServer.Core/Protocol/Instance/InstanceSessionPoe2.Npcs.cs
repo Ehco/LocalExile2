@@ -1,8 +1,9 @@
 namespace GameServer.Core.Protocol.Instance;
 
 /// <summary>The area's NPCs and other server objects (PORTING-POE2.md, wave 27): a click on an NPC walks the player
-/// into reach (as an attack or a pickup), then opens its dialogue (S→C 0xa3); a click on the waypoint walks there, then
-/// opens the World panel (S→C 0x98 kind 0).</summary>
+/// into reach (as an attack or a pickup), then opens its dialogue (S→C 0xa3); its options set quest flags and play
+/// their talks (C→S 0xa1, 0xa4); a click on the waypoint walks there, activates it (S→C 0x5a), then opens the World
+/// panel (S→C 0x98 kind 0).</summary>
 public sealed partial class InstanceSessionPoe2
 {
     /// <summary>How near (in cells) the player stops from an NPC to talk: NPC.ot's object_size 5 plus a cell.</summary>
@@ -12,14 +13,19 @@ public sealed partial class InstanceSessionPoe2
 
     private PendingTalk? _talk;
 
-    // The NPC whose dialogue window is open (0 = none), and whether one of its talks plays in it.
+    // The NPC whose dialogue window is open (0 = none), whether one of its talks plays in it, and the flag that talk sets
+    // once heard (Continue).
     private uint _talkingTo;
     private bool _inNpcTalk;
+    private string? _finishFlag;
+
+    /// <summary>The NPC whose dialogue window is open (its entity id), 0 for none.</summary>
+    public uint TalkingTo { get { lock (_lock) return _talkingTo; } }
 
     private int? ServerObjectIndex(uint objectId)
     {
         long i = (long)objectId - ServerObjectId(0);
-        return i >= 0 && i < _objects.Count ? (int)i : null;
+        return i >= 0 && i < _objects.Length ? (int)i : null;
     }
 
     private bool IsNpc(uint objectId) => ServerObjectIndex(objectId) is int i && _objects[i].IsNpc;
@@ -57,40 +63,68 @@ public sealed partial class InstanceSessionPoe2
         if (t.Stop != t.From) Walk.Place(t.Stop.X, t.Stop.Y, now);
         if (_objects[ServerObjectIndex(t.Npc)!.Value].IsWaypoint)
         {
+            // As PoE1's server: the click activates the waypoint (the client plays it) before the panel opens.
+            foreach (var m in ActivateWaypoint()) yield return m;
             yield return InstanceWaypointsPoe2.OpenUi(InstanceWaypointsPoe2.WorldPanelUi, t.Npc);
             yield break;
         }
-        _talkingTo = t.Npc;
-        _inNpcTalk = false;
+        (_talkingTo, _inNpcTalk, _finishFlag) = (t.Npc, false, null);
         yield return InstanceNpcsPoe2.Talk(t.Npc);
     }
 
-    // C→S 0xa1: an option of the open dialogue. As PoE1's server answers 0x82: BuyItems opens the buy window (0xaf, no
-    // stock yet), any other option opens the window on that NPCTalk row.
+    // C→S 0xa1: an option of the open dialogue, an NPCTalk row the client offered for the player's flags. As PoE1's
+    // server answers 0x82: the option's start flags are set (0x2f9; the NPCs whose states they change are created again),
+    // then BuyItems opens the buy window (0xaf, no stock yet), a FinishNPCChat script ends the dialogue (0xa3, object 0)
+    // with the finish flag set too, and any other option plays its talk in the window (0xa3 with the index).
     private IReadOnlyList<byte[]> ChooseTalk(byte option)
     {
-        if (_talkingTo == 0) return [];
-        string? category = ServerObjectIndex(_talkingTo) is int i ? _objects[i].TalkCategories.GetValueOrDefault(option) : null;
-        if (category == "BuyItems")
+        if (_talkingTo == 0 || ServerObjectIndex(_talkingTo) is not int i) return [];
+        var sent = new List<byte[]>();
+        if (_objects[i].Talks.GetValueOrDefault(option) is not { } talk)
         {
-            _inNpcTalk = false;
-            return [InstanceNpcsPoe2.ShopWindow(_talkingTo)];
+            // An option the table does not know (no server-objects.json): play it anyway.
+            (_inNpcTalk, _finishFlag) = (true, null);
+            sent.Add(InstanceNpcsPoe2.Talk(_talkingTo, option));
+            return sent;
         }
-        _inNpcTalk = true;
-        return [InstanceNpcsPoe2.Talk(_talkingTo, option)];
+        if (!talk.Available(_questFlags)) return [];
+        sent.AddRange(SetQuestFlags(talk.StartFlags));
+        if (talk.Category == "BuyItems")
+        {
+            (_inNpcTalk, _finishFlag) = (false, null);
+            sent.Add(InstanceNpcsPoe2.ShopWindow(_talkingTo));
+        }
+        else if (talk.FinishesChat)
+        {
+            sent.AddRange(EndDialogue());
+            if (talk.Finish is { } finish) sent.AddRange(SetQuestFlags([finish]));
+        }
+        else
+        {
+            (_inNpcTalk, _finishFlag) = (true, talk.Finish);
+            sent.Add(InstanceNpcsPoe2.Talk(_talkingTo, option));
+        }
+        return sent;
     }
 
-    // C→S 0xa4: Goodbye, Esc or Continue at the end of a talk. As PoE1's server answers 0x85: back to the option list
-    // after a talk, else end the dialogue (object id 0).
+    // C→S 0xa4: Goodbye, Esc or Continue at the end of a talk. As PoE1's server answers 0x85: after a talk, its finish
+    // flag is set and the window goes back to the option list; otherwise the dialogue ends (object id 0).
     private IReadOnlyList<byte[]> CloseTalk()
     {
-        if (_talkingTo != 0 && _inNpcTalk)
-        {
-            _inNpcTalk = false;
-            return [InstanceNpcsPoe2.Talk(_talkingTo)];
-        }
-        _talkingTo = 0;
+        if (_talkingTo == 0 || !_inNpcTalk) return [.. EndDialogue()];
+        var sent = new List<byte[]>();
         _inNpcTalk = false;
-        return [InstanceNpcsPoe2.Talk(0)];
+        if (_finishFlag is { } finish) sent.AddRange(SetQuestFlags([finish]));
+        _finishFlag = null;
+        sent.Add(InstanceNpcsPoe2.Talk(_talkingTo));
+        return sent;
+    }
+
+    // Ends the dialogue (0xa3 with object id 0); the NPC talked to is then created again if its states changed meanwhile.
+    private IEnumerable<byte[]> EndDialogue()
+    {
+        (_talkingTo, _inNpcTalk, _finishFlag) = (0, false, null);
+        yield return InstanceNpcsPoe2.Talk(0);
+        foreach (var m in RefreshStaleObjects()) yield return m;
     }
 }

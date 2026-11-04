@@ -198,6 +198,32 @@ public sealed class AccountService(IAccountStore store, TimeProvider? clock = nu
         }
     }
 
+    /// <summary>Replaces a PoE2 character's quest flags (QuestFlags Ids), found by name.</summary>
+    public Result<Character> SetQuestFlags(string characterName, IReadOnlyList<string> flags)
+    {
+        lock (_gate)
+        {
+            var c = store.FindCharacter(characterName);
+            if (c is null) return Result<Character>.Fail(AuthError.NotFound);
+            var u = c with { QuestFlags = [.. flags.Distinct().Order()] };
+            store.UpdateCharacter(u);
+            return Result<Character>.Success(u);
+        }
+    }
+
+    /// <summary>Replaces a PoE2 character's activated waypoints (WorldAreas Ids), found by name.</summary>
+    public Result<Character> SetWaypoints(string characterName, IReadOnlyList<string> waypoints)
+    {
+        lock (_gate)
+        {
+            var c = store.FindCharacter(characterName);
+            if (c is null) return Result<Character>.Fail(AuthError.NotFound);
+            var u = c with { Waypoints = [.. waypoints.Distinct().Order()] };
+            store.UpdateCharacter(u);
+            return Result<Character>.Success(u);
+        }
+    }
+
     /// <summary>Records the character's worn portrait variation (0 = the class's own), found by name.</summary>
     public Result<Character> SetPortrait(string characterName, ushort portrait)
     {

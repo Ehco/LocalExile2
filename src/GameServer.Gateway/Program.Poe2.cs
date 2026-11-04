@@ -15,8 +15,10 @@ partial class Program
     // the harness has none).
     const ushort Poe2FallbackArea = 0x3f70;
 
-    // What the Gateway enters a PoE2 client with: Auth's area and character for the ticket.
-    sealed record Poe2Ticket(ushort Area, uint Seed, ulong Instance, string Character, CharacterClass Class, int Level);
+    // What the Gateway enters a PoE2 client with: Auth's area and character for the ticket, with the character's quest
+    // flags (QuestFlags Ids) and activated waypoints (WorldAreas Ids).
+    sealed record Poe2Ticket(ushort Area, uint Seed, ulong Instance, string Character, CharacterClass Class, int Level,
+        IReadOnlyList<string> QuestFlags, IReadOnlyList<string> Waypoints);
 
     // Game_POE2_TRACE=1 logs every decrypted client chunk (its first 48 bytes), to map new C→S messages.
     static readonly bool Poe2Trace = Environment.GetEnvironmentVariable("Game_POE2_TRACE") == "1";
@@ -118,7 +120,13 @@ partial class Program
                 var (exits, objects) = Poe2Layout(remote, area, seed);
                 var spawn = Poe2Spawn(remote, opening.Ticket, area, exits, objects, walkable);
                 var monsters = Poe2AreaMonsters(remote, area, objects);
-                var serverObjects = Poe2AreaServerObjects(remote, area, objects, new HashSet<string>());
+                var serverObjects = Poe2AreaServerObjects(remote, area, objects);
+                // The quest tables (data/poe2/quests.json): without them the flags are kept but never reach the client,
+                // and the World panel knows no waypoint.
+                if (Poe2QuestTables.Value.FlagCount == 0)
+                    Console.WriteLine($"[gateway] {remote} no {Poe2Quests.DefaultPath}: quest flags not sent, no waypoint travel (scripts/re/poe2/quests.py)");
+                Console.WriteLine($"[gateway] {remote} {ticket.Character}: {ticket.QuestFlags.Count} quest flags, waypoints " +
+                    (ticket.Waypoints.Count == 0 ? "none" : string.Join(", ", ticket.Waypoints)));
                 // The class's starting weapon in the main hand (data/poe2/item-types.json), swung with Default
                 // Attack, and the dodge roll; the main hand's stats go in the player's stats too. The weapon is given
                 // again at each entry: inventories are not saved.
@@ -130,7 +138,10 @@ partial class Program
                     Skills: Poe2StartingSkills.For(row, weapon), Visible: weapon is null ? null : [Poe2Items.Visible(weapon)]),
                     objectType: row.ObjectType, walkable: walkable, exits: exits, monsters: monsters,
                     levelStarts: CharacterStats.LevelStarts, onLevel: level => _ = SavePoe2Level(remote, opening.Ticket, level),
-                    itemTypes: Poe2ItemTypes.Value, weapon: weapon, serverObjects: serverObjects);
+                    itemTypes: Poe2ItemTypes.Value, weapon: weapon, serverObjects: serverObjects,
+                    questFlags: ticket.QuestFlags, waypoints: ticket.Waypoints, quests: Poe2QuestTables.Value, area: Poe2Areas.ByHash(area),
+                    onQuestFlags: flags => _ = SavePoe2List(remote, opening.Ticket, "set_quest_flags", flags),
+                    onWaypoints: list => _ = SavePoe2List(remote, opening.Ticket, "set_waypoints", list));
                 var clock = Stopwatch.StartNew();
                 double? leavingSince = null;
                 bool transferred = false;
@@ -147,12 +158,12 @@ partial class Program
                         if (!wasInWorld && session.InWorld)
                             _ = RunPoe2Frames(Send, () => session.Tick(clock.Elapsed.TotalSeconds), closed.Token);
                     }
-                    if (session.LeavingBy is not null && leavingSince is null) leavingSince = clock.Elapsed.TotalSeconds;
+                    if (session.LeavingTo is not null && leavingSince is null) leavingSince = clock.Elapsed.TotalSeconds;
                     if (leavingSince is { } since && !transferred
                         && (session.LeaveAcknowledged || clock.Elapsed.TotalSeconds - since >= Poe2LeaveTimeout.TotalSeconds))
                     {
                         transferred = true;
-                        await TransferPoe2(remote, opening.Ticket, area, session.LeavingBy!.DestinationHash16, keyring, Send);
+                        await TransferPoe2(remote, opening.Ticket, area, session.LeavingTo!.Value, session.LeavingAtWaypoint, keyring, Send);
                     }
                     unread = unread[rest..];
                     if (unread.Length >= 2 && !InstanceSessionPoe2.CanFrame((ushort)(unread[0] << 8 | unread[1])))
@@ -196,11 +207,23 @@ partial class Program
             return new(resolved.Area, resolved.Seed == 0 ? 1 : resolved.Seed, resolved.Instance,
                 string.IsNullOrEmpty(resolved.Character) ? "Exile" : resolved.Character,
                 Enum.IsDefined((CharacterClass)resolved.Class) ? (CharacterClass)resolved.Class : CharacterClass.Witch,
-                Math.Clamp(resolved.Level, 1, 100));
+                Math.Clamp(resolved.Level, 1, 100), resolved.QuestFlags ?? [], resolved.Waypoints ?? []);
         Console.WriteLine($"[gateway] {remote} ticket 0x{ticket:x8} not resolved ({resolved.Error ?? "unknown area"}); " +
                           "Clearfell Encampment, seed 1, instance 1");
-        return new(Poe2FallbackArea, 1, 1, "Exile", CharacterClass.Witch, 1);
+        return new(Poe2FallbackArea, 1, 1, "Exile", CharacterClass.Witch, 1, [], []);
     }
+
+    // The character's whole quest flag list ("set_quest_flags") or waypoint list ("set_waypoints") goes to Auth's account
+    // store as soon as it changes (PORTING-POE2.md, wave 27).
+    static async Task SavePoe2List(string remote, uint ticket, string op, IReadOnlyCollection<string> list)
+    {
+        var saved = await InstanceControl.CallAsync(new ControlRequest { Op = op, Ticket = ticket, Flags = [.. list] });
+        string what = op == "set_quest_flags" ? "quest flags" : "waypoints";
+        Console.WriteLine(saved.Ok ? $"[gateway] {remote} {list.Count} {what} saved"
+            : $"[gateway] {remote} {what} not saved: {saved.Error ?? "no answer"}");
+    }
+
+    static readonly Lazy<Poe2Quests> Poe2QuestTables = new(() => Poe2Quests.Load());
 
     // A kill's new level goes to Auth's account store (and the next tickets): the character comes back at that level's
     // start. The experience into the level is not saved.
@@ -277,9 +300,8 @@ partial class Program
     static readonly Lazy<IReadOnlyDictionary<string, Poe2ServerObjects.ObjectType>> Poe2ObjectTypes = new(() => Poe2ServerObjects.Load());
 
     // The NPCs, waypoint and other server objects the area's capture places, of the types in
-    // data/poe2/server-objects.json, with their states for the player's quest flags.
-    static IReadOnlyList<ServerObjectPoe2> Poe2AreaServerObjects(string remote, ushort hash, IReadOnlyList<Poe2Areas.PlacedObject> objects,
-        IReadOnlySet<string> questFlags)
+    // data/poe2/server-objects.json (the session sets their states for the player's quest flags).
+    static IReadOnlyList<ServerObjectPoe2> Poe2AreaServerObjects(string remote, ushort hash, IReadOnlyList<Poe2Areas.PlacedObject> objects)
     {
         string id = Poe2AreaId(hash);
         if (Poe2ObjectTypes.Value.Count == 0)
@@ -288,23 +310,30 @@ partial class Program
             return [];
         }
         var notes = new List<string>();
-        var placed = Poe2ServerObjects.InArea(objects, Poe2ObjectTypes.Value, questFlags, notes);
+        var placed = Poe2ServerObjects.InArea(objects, Poe2ObjectTypes.Value, notes);
         foreach (var note in notes) Console.WriteLine($"[gateway] {remote} {id}: {note}");
         Console.WriteLine($"[gateway] {remote} {id}: {placed.Count} server objects " +
             string.Join(", ", placed.Select(o => $"{o.TypePath.Split('/')[^1]} ({o.GridX}, {o.GridY})")));
         return placed;
     }
 
-    // Where the player appears: by the exit back to the area the ticket's transfer left, else by the exit to the
-    // area's first connection (its entrance1: the way in), else the middle of Clearfell Encampment.
+    // Where the player appears: by the area's waypoint after a waypoint travel, by the exit back to the area the ticket's
+    // transfer left, else by the exit to the area's first connection (its entrance1: the way in), else the middle of
+    // Clearfell Encampment.
     static (int X, int Y) Poe2Spawn(string remote, uint ticket, ushort hash, IReadOnlyList<AreaTransitionObjectPoe2> exits,
         IReadOnlyList<Poe2Areas.PlacedObject> objects, Func<int, int, bool>? walkable)
     {
-        bool transferred = Poe2Areas.CameFrom.TryRemove(ticket, out ushort from);
+        bool transferred = Poe2Areas.CameFrom.TryRemove(ticket, out var came);
+        ushort from = came?.From ?? 0;
         if (!transferred && Poe2SpawnOverride is { } at)
         {
             Console.WriteLine($"[gateway] {remote} logs in at ({at.X}, {at.Y}) (Game_POE2_SPAWN)");
             return at;
+        }
+        if (came is { ByWaypoint: true } && Poe2Areas.WaypointArrival(objects, walkable) is { } byWaypoint)
+        {
+            Console.WriteLine($"[gateway] {remote} arrives at ({byWaypoint.X}, {byWaypoint.Y}), by the waypoint");
+            return byWaypoint;
         }
         if (!transferred && Poe2Areas.ByHash(hash) is { Town: false, Connections: [var first, ..] } && Poe2Areas.ById(first) is { } way)
             from = way.Hash;
@@ -327,7 +356,7 @@ partial class Program
 
     // Auth moves the character to the destination and issues its ticket; 0x29 sends the client there (it reconnects
     // to this Gateway with that ticket).
-    static async Task TransferPoe2(string remote, uint ticket, ushort from, ushort area, InstanceKeyring keyring,
+    static async Task TransferPoe2(string remote, uint ticket, ushort from, ushort area, bool byWaypoint, InstanceKeyring keyring,
         Func<byte[], string?, Task> send)
     {
         var r = await InstanceControl.CallAsync(new ControlRequest { Op = "transfer", Ticket = ticket, Area = area });
@@ -336,7 +365,7 @@ partial class Program
             Console.WriteLine($"[gateway] {remote} transfer to 0x{area:x4} failed: {r.Error}");
             return;
         }
-        Poe2Areas.CameFrom[r.Ticket] = from;
+        Poe2Areas.CameFrom[r.Ticket] = new(from, byWaypoint);
         string host = Environment.GetEnvironmentVariable("Game_GATEWAY_HOST") ?? "127.0.0.1";
         ushort port = ushort.TryParse(Environment.GetEnvironmentVariable("Game_GATEWAY_PORT"), out var gp) ? gp : (ushort)6112;
         await send(InstanceProtocolPoe2.ConnectInstance(host, port, r.Ticket, r.Area, keyring.Key(r.Ticket)),
@@ -368,6 +397,12 @@ partial class Program
         InstanceProtocolPoe2.ChangeAreaId => $"0x2f1 change area to 0x{message[3] << 8 | message[4]:x4}",
         InstanceProtocolPoe2.FrameLengthId => $"0x2f5 frame length {message[2]} ms, then 0x2f4 every frame",
         InstanceMovementPoe2.DirectionMoveEchoId => $"0x64 move echo {Convert.ToHexString(message, 13, message.Length - 13)}",
+        InstanceProtocolPoe2.RemoveObjectId => $"0x2fa remove object 0x{message[2] << 24 | message[3] << 16 | message[4] << 8 | message[5]:x}",
+        InstanceProgressionPoe2.ComponentUpdateId => $"0x2f9 component update ({message.Length} B)",
+        InstanceNpcsPoe2.TalkId => $"0xa3 npc 0x{message[2] << 24 | message[3] << 16 | message[4] << 8 | message[5]:x} mode 0x{message[13]:x2}",
+        InstanceNpcsPoe2.ShopWindowId => "0xaf buy window",
+        InstanceWaypointsPoe2.WaypointsId => $"0x5a waypoints {Convert.ToHexString(message, 7, InstanceWaypointsPoe2.BitsetLength)}",
+        InstanceWaypointsPoe2.OpenUiId => $"0x98 open ui kind {message[3]}",
         var id => $"0x{id:x}",
     };
 }

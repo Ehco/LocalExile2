@@ -15,10 +15,14 @@ public enum CharacterClass { Scion, Marauder, Ranger, Witch, Duelist, Templar, S
 /// <see cref="AccountService.StartingArea"/>.</param>
 /// <param name="Portrait">The worn portrait (a MicrotransactionCharacterPortraitVariations variation, 0 = the class's):
 /// the character list shows it (the Gateway reports picks with "set_portrait").</param>
+/// <param name="QuestFlags">PoE2: the character's quest flags (QuestFlags.datc64 Ids), kept by the Gateway with
+/// "set_quest_flags" (PORTING-POE2.md, wave 27). PoE1 keeps its own in the character saves.</param>
+/// <param name="Waypoints">PoE2: the WorldAreas Ids whose waypoint the character has activated ("set_waypoints").</param>
 public sealed record Character(
     Guid Id, Guid AccountId, string Name, CharacterClass Class, int Level,
     string League, string AreaId, DateTimeOffset CreatedUtc, DateTimeOffset LastPlayedUtc, string? LastTown = null,
-    ushort Portrait = 0, HardcoreDeathRecord? HardcoreDeath = null);
+    ushort Portrait = 0, HardcoreDeathRecord? HardcoreDeath = null, IReadOnlyList<string>? QuestFlags = null,
+    IReadOnlyList<string>? Waypoints = null);
 
 /// <summary>A committed Hardcore death. The source league is retained after migration; Ruthless deaths are terminal.
 /// Stored with the account's character record, separately from mutable inventory/progress saves.</summary>

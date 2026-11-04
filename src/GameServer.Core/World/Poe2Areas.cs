@@ -111,7 +111,19 @@ public static class Poe2Areas
         return (x, y);
     }
 
-    /// <summary>The area each transfer's ticket left (by an exit); the new connection arrives by the exit back. In memory:
-    /// a Gateway restart drops the client to the login anyway.</summary>
-    public static readonly System.Collections.Concurrent.ConcurrentDictionary<uint, ushort> CameFrom = new();
+    const string WaypointType = "Metadata/MiscellaneousObjects/Waypoint";
+
+    /// <summary>Where a player travelling by waypoint appears: a walkable cell 8 to 20 cells from the area's waypoint
+    /// object (<see cref="Near"/>); null when the capture places none.</summary>
+    public static (int X, int Y)? WaypointArrival(IReadOnlyList<PlacedObject> objects, Func<int, int, bool>? walkable) =>
+        objects.FirstOrDefault(o => o.Type == WaypointType) is { } w ? Near(w.X, w.Y, walkable) : null;
+
+    /// <summary>How a transfer's ticket left its area: <paramref name="From"/> (its HASH16) by an exit, or
+    /// <paramref name="ByWaypoint"/> from the World panel (wave 27): the new connection arrives by the exit back, or by
+    /// the destination's waypoint.</summary>
+    public sealed record Transfer(ushort From, bool ByWaypoint = false);
+
+    /// <summary>The area each transfer's ticket left; the new connection arrives accordingly. In memory: a Gateway
+    /// restart drops the client to the login anyway.</summary>
+    public static readonly System.Collections.Concurrent.ConcurrentDictionary<uint, Transfer> CameFrom = new();
 }

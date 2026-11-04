@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace GameServer.Core.Protocol.Instance;
 
 /// <summary>
@@ -11,7 +13,7 @@ namespace GameServer.Core.Protocol.Instance;
 /// <item>NPC: PoE1's two bytes, u8 1 (has dialogue) and u8 0xff (no component must be alive to talk);</item>
 /// <item>Stats: an empty table (7 bytes, as the exits'); Transitionable: u8 state;</item>
 /// <item>StateMachine: u8 shared-state count, u8 timer count 0, per state a compact value and u8 0x02 (the client
-/// keeps the server's value: the states follow the player's quest flags, <see cref="World.Poe2ServerObjects"/>);</item>
+/// keeps the server's value: the states follow the player's quest flags, <see cref="ForFlags"/>);</item>
 /// <item>BaseEvents, Pathfinding, Functions: no data. HideoutDoodad: no data outside a hideout (PoE1's reader reads
 /// its u32 + u8 + u8 only for hideout objects).</item>
 /// </list>
@@ -34,8 +36,28 @@ public sealed record ServerObjectPoe2(string TypePath, int GridX, int GridY, IRe
     /// <summary>Whether the type is a waypoint (opens the World panel).</summary>
     public bool IsWaypoint => TypePath.EndsWith("/Waypoint", StringComparison.Ordinal);
 
-    /// <summary>The NPC's dialogue options by index (C→S 0xa1): their NPCTalkCategory Id (Gossip, Quests, BuyItems ...).</summary>
-    public IReadOnlyDictionary<int, string> TalkCategories { get; init; } = new Dictionary<int, string>();
+    /// <summary>The StateMachine's shared states with their .ot defaults, in .ot order.</summary>
+    public IReadOnlyList<(string Name, int Default)> StateDefaults { get; init; } = [];
+
+    /// <summary>The type's per_player_quest_flag_state_&lt;state&gt;_&lt;value&gt; rules, in .ot order: the state takes the
+    /// value when the player has the flag.</summary>
+    public IReadOnlyList<(string State, int Value, string Flag)> StateRules { get; init; } = [];
+
+    /// <summary>The NPC's dialogue options by index (what C→S 0xa1 sends).</summary>
+    public IReadOnlyDictionary<int, NpcTalk> Talks { get; init; } = new Dictionary<int, NpcTalk>();
+
+    /// <summary>The object with its shared states for a player with these quest flags: each state's default, then every
+    /// rule whose flag the player has, in .ot order (a later rule wins).</summary>
+    public ServerObjectPoe2 ForFlags(IReadOnlySet<string> questFlags)
+    {
+        var values = StateDefaults.Select(s => s.Default).ToArray();
+        foreach (var (state, value, flag) in StateRules)
+        {
+            int i = StateDefaults.ToList().FindIndex(s => s.Name == state);
+            if (i >= 0 && questFlags.Contains(flag)) values[i] = value;
+        }
+        return this with { SharedStates = values };
+    }
 
     public byte[] Blob()
     {
@@ -64,4 +86,32 @@ public sealed record ServerObjectPoe2(string TypePath, int GridX, int GridY, IRe
         w.U8(0);            // tasks
         return w.ToArray();
     }
+}
+
+/// <summary>
+/// An NPC's dialogue option, an NPCTalk row (data/poe2/server-objects.json "talk"; PORTING-POE2.md, wave 27). The
+/// client offers it when the player has all of <paramref name="Requires"/> and none of <paramref name="Excludes"/>
+/// (NPCTalk's columns _3 and _4, PoE1's QuestFlag1 and QuestFlag2), and sends its <paramref name="Index"/> (C→S 0xa1).
+/// </summary>
+/// <param name="Category">The NPCTalkCategory Id: Gossip, Quests, QuestReward, BuyItems, SellItems, Music ...</param>
+/// <param name="Start">The flags set when the option is picked (QuestFlags1, PoE1's QuestFlag4).</param>
+/// <param name="Finish">The flag set once its talk has been heard (Continue; QuestFlag2, PoE1's QuestFlag5), or null.</param>
+/// <param name="Script">The row's Script: <c>SetQuestFlag(...)</c> sets a flag (its delay is ignored),
+/// <c>triggerer.FinishNPCChat()</c> ends the dialogue at once instead of playing the talk in the window.</param>
+public sealed record NpcTalk(int Index, string Category, string[]? Requires = null, string[]? Excludes = null,
+    string[]? Start = null, string? Finish = null, string? Script = null)
+{
+    /// <summary>Whether the client offers the option to a player with these flags.</summary>
+    public bool Available(IReadOnlySet<string> questFlags) =>
+        (Requires ?? []).All(questFlags.Contains) && !(Excludes ?? []).Any(questFlags.Contains);
+
+    /// <summary>The flags the Script sets with SetQuestFlag(flag).</summary>
+    public IReadOnlyList<string> ScriptFlags =>
+        [.. Regex.Matches(Script ?? "", @"SetQuestFlag\(\s*([\w\-]+)\s*\)").Select(m => m.Groups[1].Value)];
+
+    /// <summary>Whether the Script ends the dialogue at once (triggerer.FinishNPCChat()).</summary>
+    public bool FinishesChat => (Script ?? "").Contains("FinishNPCChat(", StringComparison.Ordinal);
+
+    /// <summary>Every flag picking the option sets: <see cref="Start"/> and the Script's.</summary>
+    public IEnumerable<string> StartFlags => (Start ?? []).Concat(ScriptFlags);
 }

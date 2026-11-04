@@ -48,7 +48,9 @@ public static class InstanceControl
 /// the ticket's player and returns the destination's new Ticket (with New, Seed ≠ 0 gives the new instance that seed:
 /// the Gateway's capture tour); "leave" (Ticket) → the player left its instance (expiry starts);
 /// "set_level" (Ticket, Level) → the ticket's character gets that level (1 to 100) in the account store;
-/// "set_portrait" (Ticket, Portrait) → the ticket's character's worn portrait, which the character list shows.
+/// "set_portrait" (Ticket, Portrait) → the ticket's character's worn portrait, which the character list shows;
+/// "set_quest_flags" (Ticket, Flags) → the ticket's PoE2 character's whole quest flag list (QuestFlags Ids);
+/// "set_waypoints" (Ticket, Flags) → its whole list of activated waypoints (WorldAreas Ids). "resolve" returns both.
 /// </summary>
 public sealed record ControlRequest
 {
@@ -60,6 +62,8 @@ public sealed record ControlRequest
     public uint Seed { get; init; }
     public int Level { get; init; }
     public ushort Portrait { get; init; }
+    /// <summary>"set_quest_flags" / "set_waypoints": the whole new list.</summary>
+    public List<string>? Flags { get; init; }
 }
 
 public sealed record ControlResponse
@@ -92,6 +96,9 @@ public sealed record ControlResponse
     /// town (the death screen then has no Resurrect in Town). An Auth that does not send it leaves Lioneye's Watch.</summary>
     public ushort LastTown { get; init; } = 0x235c;
     public List<ControlInstance>? Instances { get; init; }
+    /// <summary>"resolve": a PoE2 character's quest flags (QuestFlags Ids) and activated waypoints (WorldAreas Ids).</summary>
+    public List<string>? QuestFlags { get; init; }
+    public List<string>? Waypoints { get; init; }
 }
 
 public sealed record ControlInstance(ulong Id, long CreatedUnix, int SecondsLeft, List<string> Players);
