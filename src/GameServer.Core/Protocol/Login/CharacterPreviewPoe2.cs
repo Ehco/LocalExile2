@@ -33,14 +33,17 @@ public static class CharacterPreviewPoe2
             bySlot[item.Slot] = item;
         }
         var w = new BlobWriter();
-        foreach (var item in bySlot)
-        {
-            if (item is not { VisualIdentity: not 0, Type: not 0 }) { w.U8(0); continue; }
-            w.U8(item.Type)
-                .U16(item.SkinVisual != 0 ? item.SkinVisual : item.VisualIdentity).U32(item.SkinHash).U8(0)
-                .U16(item.EffectVisual).U32(item.EffectHash).U8(0)
-                .U8(item.Stance).U16(item.VisualIdentity).U8(0).U8(0).U8(0);
-        }
+        foreach (var item in bySlot) Record(w, item);
         return w.ToArray();
+    }
+
+    /// <summary>One record as 0x1426c41a0 reads it: the item's type, then the rest unless the slot is empty.</summary>
+    public static void Record(BlobWriter w, VisibleItem? item)
+    {
+        if (item is not { VisualIdentity: not 0, Type: not 0 }) { w.U8(0); return; }
+        w.U8(item.Type)
+            .U16(item.SkinVisual != 0 ? item.SkinVisual : item.VisualIdentity).U32(item.SkinHash).U8(0)
+            .U16(item.EffectVisual).U32(item.EffectHash).U8(0)
+            .U8(item.Stance).U16(item.VisualIdentity).U8(0).U8(0).U8(0);
     }
 }

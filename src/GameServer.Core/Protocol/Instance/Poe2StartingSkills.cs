@@ -1,4 +1,5 @@
 using GameServer.Core.Accounts;
+using GameServer.Core.World;
 
 namespace GameServer.Core.Protocol.Instance;
 
@@ -13,10 +14,19 @@ namespace GameServer.Core.Protocol.Instance;
 /// The unarmed weapon is the class's: Characters WeaponSpeed (606 ms for every class), MinDamage, MaxDamage and
 /// MaxAttackDistance. As in PoE1 the server sends final values in the player's and the attack's stats; the client
 /// derives none of them (keys are Stats.datc64 row + 1).
+/// A class with a starting weapon swings it with Default Attack (GrantedEffects MeleePlayer, ActiveSkills player_melee,
+/// GEPL and GESSPL row 0), whose ActiveSkillWeaponRequirement 36 "Any Melee Weapon and Unarmed" takes the one hand mace:
+/// the attack takes the weapon's values, and main_hand_weapon_type is the weapon's WieldableClasses row (0 unarmed, 5 one
+/// hand mace), the index of the client's per-weapon tables at 0x142f65698-0x142f65737. With a weapon in hand the client
+/// never sends Punch (an Unarmed skill), and the weapon's own basic attack (the Wooden Club's Mace Strike, GEPL and GESSPL
+/// row 400, <see cref="Poe2Items.ItemType.Attack"/>) stays greyed out ("[Not enough mana]") although the club counts as
+/// usable and the Actor's hand types are sent; Default Attack hit and killed zombies live (2026-11-04). PORTING-POE2.md
+/// wave 26.
 /// </summary>
 public static class Poe2StartingSkills
 {
     public const uint PunchEffectsPerLevelRow = 40, PunchStatSetsPerLevelRow = 40;
+    public const uint DefaultAttackEffectsPerLevelRow = 0, DefaultAttackStatSetsPerLevelRow = 0;
     public const uint DodgeRollEffectsPerLevelRow = 899, DodgeRollStatSetsPerLevelRow = 905;
     public const uint PunchId = ActorSkillsPoe2.FirstSkillId, DodgeRollId = ActorSkillsPoe2.FirstSkillId + 1;
 
@@ -26,6 +36,7 @@ public static class Poe2StartingSkills
     public const uint HundredTimesAttacksPerSecond = 0x2b3, HundredTimesDamagePerSecond = 0x2b4;
     public const uint DisplayHundredTimesDamagePerSkillUse = 0x7c1, SkillUsesMainHand = 0x1c0e;
     public const uint MainHandBaseMaximumAttackDistance = 0x13c, MainHandMaximumAttackDistance = 0x4cd;
+    public const uint MainHandWeaponType = 0x3;
 
     public const int UnarmedAttackMs = 606, UnarmedAttackDistance = 8, UnarmedMinimumDamage = 2;
 
@@ -39,25 +50,36 @@ public static class Poe2StartingSkills
     };
 
     /// <summary>The unarmed weapon's final stats: in the player's Stats and in the attack's.</summary>
-    public static IReadOnlyList<(uint Key, int Value)> UnarmedStats(Poe2Classes.Row row)
+    public static IReadOnlyList<(uint Key, int Value)> UnarmedStats(Poe2Classes.Row row) =>
+        WeaponStats(UnarmedMinimumDamage, UnarmedMaximumDamage(row), UnarmedAttackMs, UnarmedAttackDistance);
+
+    /// <summary>The main hand's final stats: the weapon's when it has values, else unarmed.</summary>
+    public static IReadOnlyList<(uint Key, int Value)> MainHandStats(Poe2Classes.Row row, Poe2Items.ItemType? weapon) =>
+        weapon?.Weapon is { } v
+            ? [.. WeaponStats(v.MinimumDamage, v.MaximumDamage, v.AttackMs, v.Range), (MainHandWeaponType, weapon.Wieldable ?? 0)]
+            : UnarmedStats(row);
+
+    static IReadOnlyList<(uint Key, int Value)> WeaponStats(int min, int max, int attackMs, int range)
     {
-        int max = UnarmedMaximumDamage(row), aps100 = 100_000 / UnarmedAttackMs;
-        int average100 = (UnarmedMinimumDamage + max) * 50;
+        int aps100 = 100_000 / attackMs, average100 = (min + max) * 50;
         return
         [
-            (MainHandMinimumPhysicalDamage, UnarmedMinimumDamage), (MainHandMaximumPhysicalDamage, max),
-            (MainHandMinimumTotalDamage, UnarmedMinimumDamage), (MainHandMaximumTotalDamage, max),
-            (MainHandBaseWeaponAttackDurationMs, UnarmedAttackMs),
+            (MainHandMinimumPhysicalDamage, min), (MainHandMaximumPhysicalDamage, max),
+            (MainHandMinimumTotalDamage, min), (MainHandMaximumTotalDamage, max),
+            (MainHandBaseWeaponAttackDurationMs, attackMs),
             (HundredTimesAttacksPerSecond, aps100), (HundredTimesDamagePerSecond, average100 * aps100 / 100),
             (DisplayHundredTimesDamagePerSkillUse, average100), (SkillUsesMainHand, 1),
-            (MainHandBaseMaximumAttackDistance, UnarmedAttackDistance), (MainHandMaximumAttackDistance, UnarmedAttackDistance),
+            (MainHandBaseMaximumAttackDistance, range), (MainHandMaximumAttackDistance, range),
         ];
     }
 
-    /// <summary>Punch and the dodge roll, for the player's Actor.</summary>
-    public static IReadOnlyList<GrantedSkillPoe2> For(Poe2Classes.Row row) =>
+    /// <summary>The attack (Punch unarmed, Default Attack with a weapon) with the main hand's values, and the dodge roll,
+    /// for the player's Actor.</summary>
+    public static IReadOnlyList<GrantedSkillPoe2> For(Poe2Classes.Row row, Poe2Items.ItemType? weapon = null) =>
     [
-        new(PunchId, PunchEffectsPerLevelRow, PunchStatSetsPerLevelRow, UnarmedStats(row)),
+        weapon?.Weapon is null
+            ? new(PunchId, PunchEffectsPerLevelRow, PunchStatSetsPerLevelRow, MainHandStats(row, weapon))
+            : new(PunchId, DefaultAttackEffectsPerLevelRow, DefaultAttackStatSetsPerLevelRow, MainHandStats(row, weapon)),
         new(DodgeRollId, DodgeRollEffectsPerLevelRow, DodgeRollStatSetsPerLevelRow),
     ];
 }

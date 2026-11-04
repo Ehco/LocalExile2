@@ -11,6 +11,9 @@ public sealed partial class InstanceSessionPoe2
     /// <summary>The main inventory's Inventories row (12 × 5).</summary>
     public const byte MainInventoryRow = 0;
 
+    /// <summary>The main hand's Inventories row (Weapon1, 2 × 4; row 1 is the body armour).</summary>
+    public const byte Weapon1Row = 2;
+
     private IReadOnlyDictionary<string, Poe2Items.ItemType> _itemTypes = new Dictionary<string, Poe2Items.ItemType>();
     private Dictionary<uint, Poe2Items.ItemType> _itemTypesByHash = [];
     private readonly Dictionary<uint, WorldItemObjectPoe2> _groundItems = [];
@@ -23,17 +26,31 @@ public sealed partial class InstanceSessionPoe2
 
     private PendingPickup? _pickup;
 
+    private readonly Poe2Inventory _weapon1 = new(InstanceInventoriesPoe2.InventoryId(Weapon1Row),
+        InstanceInventoriesPoe2.PlayerDefaults[Weapon1Row].Width, InstanceInventoriesPoe2.PlayerDefaults[Weapon1Row].Height);
+    private byte[]? _weaponChange;
+
     /// <summary>The items lying in the area, by entity id.</summary>
     public IReadOnlyDictionary<uint, WorldItemObjectPoe2> GroundItems { get { lock (_lock) return new Dictionary<uint, WorldItemObjectPoe2>(_groundItems); } }
 
     /// <summary>The main inventory's items.</summary>
     public IReadOnlyList<Poe2Inventory.Entry> MainInventory { get { lock (_lock) return [.. _mainInventory.Items]; } }
 
-    private void InitLoot(IReadOnlyDictionary<string, Poe2Items.ItemType>? itemTypes)
+    /// <summary>The main hand's items.</summary>
+    public IReadOnlyList<Poe2Inventory.Entry> Weapon1 { get { lock (_lock) return [.. _weapon1.Items]; } }
+
+    private void InitLoot(IReadOnlyDictionary<string, Poe2Items.ItemType>? itemTypes, Poe2Items.ItemType? weapon)
     {
         _itemTypes = itemTypes ?? _itemTypes;
         _itemTypesByHash = _itemTypes.Values.GroupBy(t => t.Hash).ToDictionary(g => g.Key, g => g.First());
         _nextItemId = MonsterId(_monsters.Count);
+        if (weapon is not null) _weaponChange = _weapon1.Add(Poe2Items.Create(weapon), weapon.Width, weapon.Height, 1);
+    }
+
+    // The starting weapon in the main hand (0xde after the empty inventories), wave 26.
+    private IEnumerable<byte[]> EquipmentMessages()
+    {
+        if (_weaponChange is { } change) yield return change;
     }
 
     // A kill's drop (Poe2Items.Roll) where the monster fell: a WorldItem object (S→C 0x2f7).

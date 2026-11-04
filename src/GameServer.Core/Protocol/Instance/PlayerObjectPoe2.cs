@@ -14,11 +14,12 @@ namespace GameServer.Core.Protocol.Instance;
 /// <param name="Stats">Final stat values by client key (<see cref="Poe2CharacterStats"/>): the character panel and the
 /// HUD's maximums show them.</param>
 /// <param name="Skills">The Actor's granted skills (<see cref="ActorSkillsPoe2"/>): the skill bar offers them.</param>
+/// <param name="Visible">What the model wears, by visual slot (<see cref="Login.CharacterPreviewPoe2"/>).</param>
 public sealed record PlayerObjectPoe2(int GridX, int GridY, uint Life, uint EnergyShield = 0, uint Mana = 0,
     string Name = "", byte ClassRow = 1, uint Experience = 0, IReadOnlyList<(uint Key, int Value)>? Stats = null,
-    IReadOnlyList<GrantedSkillPoe2>? Skills = null)
+    IReadOnlyList<GrantedSkillPoe2>? Skills = null, IReadOnlyList<VisibleItem>? Visible = null)
 {
-    /// <summary>The blob's length with an empty name and no skills; each name character adds two bytes.</summary>
+    /// <summary>The blob's length with an empty name, no skills and nothing worn; each name character adds two bytes.</summary>
     public const int BlobLength = 242;
 
     /// <summary>Where the Player component starts in the blob.</summary>
@@ -51,15 +52,25 @@ public sealed record PlayerObjectPoe2(int GridX, int GridY, uint Life, uint Ener
         // u8 count (0x141deecb0). 35 bytes after an empty name.
         w.WStr32(Name).U8(ClassRow).U32(Experience);
         w.Zeros(30);
-        w.U8(0).U8(0);      // Inventories (0x1416e6d70)
+        // Inventories (vtable 0x1434c8c38, read 0x141d82bc0): u8 count of (u8 visual slot, the character screen's
+        // record 0x1426c41a0), then a u8 count of a second list (none).
+        w.U8((byte)(Visible?.Count ?? 0));
+        foreach (var item in Visible ?? []) { w.U8(item.Slot); Login.CharacterPreviewPoe2.Record(w, item); }
+        w.U8(0);
         // Actor (0x1416d8210 → body 0x142147300): three (u8, u8, WStr32) entries, then 0x142149510's flags byte f0 and,
-        // on create, the skill list; 40 bytes in all with no skills while alive (48 at zero life).
-        w.Zeros(18).U8(0);
+        // on create, the skill list; 40 bytes in all with no skills while alive (48 at zero life). The entries are the
+        // hands' weapon types (+0x2c8 main, +0x2cc off, stride 0x28): ItemClasses row + 1, what a skill's
+        // WeaponRequirements are checked against (0x141e859c0 → 0x141e85dc0). The first is the one used without weapon
+        // sets. Sending the club's 13 here (or in all three) did not make Mace Strike usable (live 2026-11-04).
+        w.U8(MainHandType).U8(0).WStr32("").Zeros(12).U8(0);
         ActorSkillsPoe2.WriteList(w, Skills ?? []);
         w.Zeros(14);
         w.U8(0);            // tasks (0x141e7dd60)
         return w.ToArray();
     }
+
+    /// <summary>The main hand's weapon type (<see cref="VisibleItem.Type"/>), 0 without a weapon.</summary>
+    byte MainHandType => Visible?.FirstOrDefault(v => v.Slot == Login.CharacterPreviewPoe2.Weapon1)?.Type ?? 0;
 
     private static void Pool(BlobWriter w, uint current) => w.U32(current).U32(0).U16(0).U32(0).U32(0);
 }

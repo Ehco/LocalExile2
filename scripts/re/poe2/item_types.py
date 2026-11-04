@@ -10,6 +10,14 @@ data needs.
   blocks not read): the reader calls each component's vtable +0x28 in this order. Currency is Base, Usable, Stack.
 - maxStack: CurrencyItems StackSize (1 without a row).
 
+The classes' starting weapons (Characters StartWeapons, wave 26) are added with:
+- itemClass: the ItemClasses row (the visible item's type is this + 1); stance: the ItemStances row named after the
+  class, or null; wieldable: the WieldableClasses row of that class (the client's main_hand_weapon_type enum);
+- weapon: WeaponTypes damage, attack time (ms), reach and critical chance (null for wands, which have no row);
+- startingClasses: the Characters rows that start with it;
+- attack: the basic attack the weapon gives (ActiveSkills player_melee_<class>, its GrantedEffects "...Player" row):
+  the GEPL and GESSPL rows at level 1, or null for weapons without one (wands, staves, bows, crossbows).
+
 Files come from the Steam bundles through scripts/re/poe2/steamdump and are cached in Tools/re/out/poe2.
 """
 import json
@@ -42,9 +50,46 @@ def load(types):
     return files
 
 
+# The basic melee attack of each starting weapon's class (ActiveSkills Id).
+MELEE = {"One Hand Mace": "player_melee_1hmace", "One Hand Axe": "player_melee_1haxe",
+         "One Hand Sword": "player_melee_1hsword", "Dagger": "player_melee_dagger", "Flail": "player_melee_flail",
+         "Spear": "player_melee_spear", "Warstaff": "player_melee_quarterstaff"}
+
+
+def starting_weapons(bases):
+    """Extra fields of the classes' starting weapons, by BaseItemTypes row."""
+    classes, stances = dat.table("ItemClasses"), {r["Id"]: r["_row"] for r in dat.table("ItemStances")}
+    weapons = {r["BaseItemType"]: r for r in dat.table("WeaponTypes")}
+    wieldable = {r["ItemClass"]: r["_row"] for r in dat.table("WieldableClasses")}
+    active = {r["Id"]: r["_row"] for r in dat.table("ActiveSkills")}
+    effects = dat.table("GrantedEffects")
+    per_level = {(r["GrantedEffect"], r["Level"]): r["_row"] for r in dat.table("GrantedEffectsPerLevel")}
+    stat_sets = {(r["StatSet"], r["GemLevel"]): r["_row"] for r in dat.table("GrantedEffectStatSetsPerLevel")}
+    out = {}
+    for c in dat.table("Characters"):
+        for row in c["StartWeapons"]:
+            if row in out:
+                out[row]["startingClasses"].append(c["_row"])
+                continue
+            klass = classes[bases[row]["ItemClass"]]["Id"]
+            w = weapons.get(row)
+            attack = None
+            if klass in MELEE:
+                e = next(e for e in effects if e["ActiveSkill"] == active[MELEE[klass]] and e["Id"].endswith("Player"))
+                attack = {"effectsPerLevelRow": per_level[(e["_row"], 1)], "statSetsPerLevelRow": stat_sets[(e["StatSet"], 1)]}
+            out[row] = {"itemClass": bases[row]["ItemClass"], "stance": stances.get(klass.replace(" ", "")),
+                        "wieldable": wieldable.get(bases[row]["ItemClass"]),
+                        "weapon": w and {"minimumDamage": w["DamageMin"], "maximumDamage": w["DamageMax"],
+                                         "attackMs": w["Speed"], "range": w["RangeMax"], "critical": w["CritChance"]},
+                        "startingClasses": [c["_row"]], "attack": attack}
+    return out
+
+
 def main():
     bases = dat.table("BaseItemTypes")
+    starts = starting_weapons(bases)
     rows = [r for r in bases if r["Id"].startswith(PREFIX) and r["Name"] and not r["Name"].startswith("[DNT]")]
+    rows += [bases[row] for row in sorted(starts)]
     visuals = dat.table("ItemVisualIdentity")
     stacks = {r["BaseItemType"]: r["StackSize"] for r in dat.table("CurrencyItems") if r["BaseItemType"] is not None}
     files = load([r["Id"] for r in rows] + [r["InheritsFrom"] for r in rows if r["InheritsFrom"]])
@@ -62,7 +107,8 @@ def main():
         out.append({"id": r["Id"], "row": r["_row"], "name": r["Name"], "hash": r["HASH32"], "width": r["Width"],
                     "height": r["Height"], "dropLevel": r["DropLevel"],
                     "visualIdentity": visuals[visual]["HASH16"] if visual is not None else 0,
-                    "components": m["components"][:m["read"]], "maxStack": stacks.get(r["_row"], 1)})
+                    "components": m["components"][:m["read"]], "maxStack": stacks.get(r["_row"], 1),
+                    **starts.get(r["_row"], {})})
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(OUT, "w", encoding="utf-8") as f:
         f.write("[\n" + ",\n".join(" " + json.dumps(r, separators=(",", ":")) for r in out) + "\n]\n")

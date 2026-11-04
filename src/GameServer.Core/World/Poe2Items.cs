@@ -1,5 +1,6 @@
 using System.Text.Json;
 using GameServer.Core.Protocol.Instance;
+using GameServer.Core.Protocol.Login;
 
 namespace GameServer.Core.World;
 
@@ -10,9 +11,27 @@ namespace GameServer.Core.World;
 /// </summary>
 public static class Poe2Items
 {
-    /// <summary>A BaseItemTypes row: its HASH32, grid size, ItemVisualIdentity HASH16, .it components and stack size.</summary>
+    /// <summary>A BaseItemTypes row: its HASH32, grid size, ItemVisualIdentity HASH16, .it components and stack size.
+    /// A class's starting weapon also has its ItemClasses row, ItemStances row, weapon values, the Characters rows that
+    /// start with it, the basic attack it gives and its WieldableClasses row (wave 26).</summary>
     public sealed record ItemType(string Id, int Row, string Name, uint Hash, byte Width, byte Height, int DropLevel,
-        ushort VisualIdentity, string[] Components, int MaxStack = 1);
+        ushort VisualIdentity, string[] Components, int MaxStack = 1, int? ItemClass = null, byte? Stance = null,
+        WeaponValues? Weapon = null, int[]? StartingClasses = null, BasicAttack? Attack = null,
+        int? Wieldable = null);
+
+    /// <summary>WeaponTypes: damage, attack time, reach in cells and critical chance (hundredths of a percent).</summary>
+    public sealed record WeaponValues(int MinimumDamage, int MaximumDamage, int AttackMs, int Range, int Critical);
+
+    /// <summary>A weapon's basic attack (ActiveSkills player_melee_*): its GEPL and GESSPL rows at level 1.</summary>
+    public sealed record BasicAttack(uint EffectsPerLevelRow, uint StatSetsPerLevelRow);
+
+    /// <summary>The weapon a class starts with (Characters StartWeapons), or null.</summary>
+    public static ItemType? StartingWeapon(IReadOnlyDictionary<string, ItemType> types, int classRow) =>
+        types.Values.FirstOrDefault(t => t.StartingClasses?.Contains(classRow) == true);
+
+    /// <summary>How the player's model shows a weapon in the main hand: visual slot 0, type ItemClasses row + 1.</summary>
+    public static VisibleItem Visible(ItemType weapon) =>
+        new(CharacterPreviewPoe2.Weapon1, weapon.VisualIdentity, weapon.Stance ?? 0xff, (byte)((weapon.ItemClass ?? -1) + 1));
 
     public const string DefaultPath = "data/poe2/item-types.json";
 
@@ -28,7 +47,7 @@ public static class Poe2Items
 
     /// <summary>An item of the type, a stack of <paramref name="stack"/> (clamped to the type's stack size).</summary>
     public static Item Create(ItemType type, int stack = 1) =>
-        new(type.Hash, type.Components, type.VisualIdentity) { StackSize = (ushort)Math.Clamp(stack, 1, Math.Max(1, type.MaxStack)) };
+        new(type.Hash, type.Components, type.VisualIdentity) { StackSize = (ushort)Math.Clamp(stack, 1, Math.Max(1, type.MaxStack)), Poe2 = true };
 
     public const int DefaultDropChance = 35;
 

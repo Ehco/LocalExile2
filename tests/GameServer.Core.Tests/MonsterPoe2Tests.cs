@@ -15,6 +15,18 @@ public class MonsterPoe2Tests
         new(1158, 1326, 30, ZombieComponents, Rotation: 1.5f, Model: model, SharedStates: states ?? ["dead"]);
 
     [Fact]
+    public void A_rotting_guards_hit_is_scaled_to_half_for_playability()
+    {
+        var guard = new Poe2Monsters.Variety("Metadata/Monsters/Zombies/CourtGuardZombieAxe", 1735, ZombieComponents,
+            DamageMultiplier: 120, AttackSpeed: 2505, MaximumAttackDistance: 7, AttackLevels: [[1, 21391, 26777]]);
+        var level2 = new Poe2Monsters.LevelStats(2, 20, 10.26, 18, 0, 0, 0);
+
+        // 10.26 × 120 % × 50 % = 6.16, ± 20 %.
+        Assert.Equal(50, Poe2Monsters.DamageScalePercent);
+        Assert.Equal(new Poe2Monsters.Attack(5, 7, 2505, 7, 21391, 26777), Poe2Monsters.AttackOf(guard, level2));
+    }
+
+    [Fact]
     public void A_zombie_blob_is_the_313_bytes_the_client_reads()
     {
         // Live 2026-11-04: each CourtGuardZombie blob was read 310/310, with its 59-character model; wave 22 adds

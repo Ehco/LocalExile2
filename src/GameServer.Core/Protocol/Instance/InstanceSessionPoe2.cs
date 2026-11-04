@@ -56,7 +56,7 @@ public sealed partial class InstanceSessionPoe2
         double walkSpeed = DirectionWalk.DefaultSpeed, Func<int, int, bool>? walkable = null,
         IReadOnlyList<AreaTransitionObjectPoe2>? exits = null, IReadOnlyList<Poe2Monster>? monsters = null,
         Random? random = null, IReadOnlyList<uint>? levelStarts = null, Action<int>? onLevel = null,
-        IReadOnlyDictionary<string, Poe2Items.ItemType>? itemTypes = null)
+        IReadOnlyDictionary<string, Poe2Items.ItemType>? itemTypes = null, Poe2Items.ItemType? weapon = null)
     {
         (_player, _objectType, PlayerId, _exits, _monsters) = (player, objectType, playerId, exits ?? [], monsters ?? []);
         Walk = new DirectionWalk(player.GridX, player.GridY, walkSpeed, walkable);
@@ -64,7 +64,7 @@ public sealed partial class InstanceSessionPoe2
         _monsterLife = [.. _monsters.Select(m => (int)m.Object.Life)];
         _random = random ?? Random.Shared;
         InitExperience(levelStarts, onLevel);
-        InitLoot(itemTypes);
+        InitLoot(itemTypes, weapon);
         InitMonsters();
     }
 
@@ -263,7 +263,8 @@ public sealed partial class InstanceSessionPoe2
         return InstanceProtocolPoe2.ChangeArea(near.DestinationHash16);
     }
 
-    /// <summary>The local player (0x24), the player object (0x2f7), its inventories (0xdf), enter area (0x23) and the
+    /// <summary>The local player (0x24), the player object (0x2f7), its inventories (0xdf) and the starting weapon in
+    /// them (0xde), enter area (0x23) and the
     /// frame length (0x2f5), in the order the client accepted live, and the skills the skill bar offers (0x66); then the
     /// area's exits, and its monsters after their types (0x21).</summary>
     public IReadOnlyList<byte[]> EnterWorld() =>
@@ -272,6 +273,7 @@ public sealed partial class InstanceSessionPoe2
         InstanceProtocolPoe2.CreateObject(PlayerId, InstanceEntities.ObjectTypeHash(_objectType), _player.Blob()),
         [.. InstanceInventoriesPoe2.PlayerDefaults.SelectMany(slot =>
             InstanceInventoriesPoe2.AddInventory(InstanceInventoriesPoe2.InventoryId(slot.Row), slot))],
+        .. EquipmentMessages(),
         InstanceProtocolPoe2.EnterArea(PlayerId),
         InstanceProtocolPoe2.FrameLength(FrameMs),
         InstanceProtocolPoe2.SkillList([.. SkillIds.Select(id => (id, SlotMask(id)))]),

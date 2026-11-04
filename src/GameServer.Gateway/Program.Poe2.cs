@@ -118,15 +118,18 @@ partial class Program
                 var (exits, objects) = Poe2Layout(remote, area, seed);
                 var spawn = Poe2Spawn(remote, opening.Ticket, area, exits, objects, walkable);
                 var monsters = Poe2AreaMonsters(remote, area, objects);
-                // Punch and the dodge roll; the unarmed weapon's stats go in the player's stats too.
+                // The class's starting weapon in the main hand (data/poe2/item-types.json), swung with Default
+                // Attack, and the dodge roll; the main hand's stats go in the player's stats too. The weapon is given
+                // again at each entry: inventories are not saved.
+                var weapon = Poe2Items.StartingWeapon(Poe2ItemTypes.Value, row.Index);
                 var session = new InstanceSessionPoe2(new PlayerObjectPoe2(spawn.X, spawn.Y,
                     Life: (uint)sheet.MaximumLife, Mana: (uint)sheet.MaximumMana,
-                    Stats: [.. sheet.Stats, .. Poe2StartingSkills.UnarmedStats(row)],
+                    Stats: [.. sheet.Stats, .. Poe2StartingSkills.MainHandStats(row, weapon)],
                     Name: ticket.Character, ClassRow: row.Index, Experience: CharacterStats.ExperienceFor(ticket.Level),
-                    Skills: Poe2StartingSkills.For(row)),
+                    Skills: Poe2StartingSkills.For(row, weapon), Visible: weapon is null ? null : [Poe2Items.Visible(weapon)]),
                     objectType: row.ObjectType, walkable: walkable, exits: exits, monsters: monsters,
                     levelStarts: CharacterStats.LevelStarts, onLevel: level => _ = SavePoe2Level(remote, opening.Ticket, level),
-                    itemTypes: Poe2ItemTypes.Value);
+                    itemTypes: Poe2ItemTypes.Value, weapon: weapon);
                 var clock = Stopwatch.StartNew();
                 double? leavingSince = null;
                 bool transferred = false;

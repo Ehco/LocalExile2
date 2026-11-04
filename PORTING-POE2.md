@@ -1668,3 +1668,87 @@ Limits:
   logging out, and not in the save database.
 - Only currency drops. No gold (it needs its own counter), no rarity, no
   equipment, no moving items in the inventory, no dropping them.
+
+## Wave 26 — the starting weapon (2026-11-04)
+
+A class with a starting weapon has it in the main hand, sees it on its model and
+swings it. Code: `Poe2StartingSkills.cs`, `InstanceSessionPoe2.Loot.cs`,
+`InstanceItems.cs`, `PlayerObjectPoe2.cs`, `Poe2Items.cs`,
+`CharacterPreviewPoe2.cs`, `Program.Poe2.cs`, `scripts/re/poe2/item_types.py`.
+
+- **The weapons**: `item_types.py` adds each class's Characters StartWeapons row
+  to `data/poe2/item-types.json` (580 types): ItemClasses row, ItemStances row,
+  WeaponTypes values (damage, attack time, reach, critical), the classes that
+  start with it, its basic attack (ActiveSkills `player_melee_*`, GEPL and GESSPL
+  rows) and its WieldableClasses row. The Warrior's Wooden Club: class 12,
+  6–10 damage, 690 ms, reach 13, Mace Strike rows 400, wieldable 5.
+- **In the main hand**: S→C `0xde` into the Weapon1 inventory (Inventories row 2,
+  2 × 4), sent right after the empty inventories (`0xdf`), before enter area.
+  The player's Inventories records (`VisibleItem`) show it on the model:
+  visual slot 0, the ItemVisualIdentity, the stance, type = ItemClasses row + 1
+  (`0x1425afac0`; `0x77` none).
+- **Usable**: Mods `+0x263`, the u8 right after the level requirement. 0 makes
+  the client treat the item as unusable: its popup says "You cannot use this
+  item" (`0x1425d1300` → `0x1425d39b0` → `[+0x1964]` → ClientStrings 328, fetched
+  by `0x1423bf2b0` with id − 1), and a worn weapon's slot is drawn red. An item
+  without Mods gets 7 there (`0x1425d15ff`); we send 7. Verified live: the slot
+  is no longer red.
+- **The hand weapon types**:
+  - stat key 3 `main_hand_weapon_type` / key 4 `off_hand_weapon_type` take the
+    WieldableClasses row (0 unarmed, 5 one hand mace). It indexes the client's
+    per-weapon bool tables at `0x142f65698` (two-handed?), `+0x20` (one-handed),
+    `+0x40`, `+0x60`, `+0x80` (melee);
+  - the Actor component's hand records: `+0x2c8` main / `+0x2cc` off, three
+    records of stride `0x28` read by the Actor body (`0x142147300`) as u8, u8,
+    WStr32; defaults at `+0x924` / `+0x928`. We send the weapon's type
+    (ItemClasses row + 1, 13 for the club) in the first.
+- **The skill's weapon check** (skill constructor `0x141e848f0`):
+  - `+0x188` = stat `0x97f` skill_number_of_triggers ≤ 1;
+  - `+0x18c` / `+0x191` / `+0x192` from `0x141e859c0`: stat `0x4795`
+    active_skill_use_parent_weapon_type, else the caller's types →
+    `0x141e85dc0` → per hand `0x141e862c0`;
+  - `+0x193` from stats `0x64e`, `0x71a` skill_unusable, `0x97f`, `0x3f87`;
+  - the skill button (`0x140c67b90`, 4th argument the current mana) greys the
+    skill when `+0x18c` ≠ 0, `+0x190` = 0, `+0x188` = 0 or `+0x193` ≠ 0, among
+    other flags. "[Not enough mana]" is only the label: the cost struct
+    (`0x141e87300`: mana 0x2ac2, life 0x3333, ES 0x3659, rage 0x3356…) is 0.
+- **Which attack**:
+  - Mace Strike (`player_melee_1hmace`, ActiveSkillWeaponRequirement 2 "One Hand
+    Mace", WieldableClasses [5]) stays greyed with all of the above sent. Its
+    data equals Punch's but for the requirement. Not solved. Leads not yet
+    followed:
+    - which of the Actor's hand records the check reads depends on
+      `[comp+0x210]` → `[+0xd8]` → … → `[+0x158]+0x20` and on the skill's `+0xdc`
+      byte; the defaults at `+0x924` / `+0x928` may be the ones used;
+    - other flags of the skill button (`[rsp+0x41]`, `[rsp+0x42]`) and `+0x193`;
+    - the re-evaluation callers of `0x141e859c0`: `0x141e89b60`, `0x141d82bc0`,
+      `0x141e88940`;
+    - stats not sent yet: `0x532c` has_main_hand_weapon_stats, `0x532d`
+      has_off_hand_weapon_stats, `0x390e` skill_disabled_by_stat.
+  - Punch (`player_melee_unarmed`, an Unarmed skill) is offered but the client
+    never sends it with a weapon in hand.
+  - Default Attack (`player_melee`, GrantedEffects MeleePlayer, GEPL and GESSPL
+    row 0; requirement 36 "Any Melee Weapon and Unarmed", WieldableClasses
+    3, 8, 4, 9, 5, 10, 0, 16, 14, 1, 17, 20, 26) works: the picker shows it lit,
+    the client sends `0x1a5` and its hits land. We give it, with the weapon's
+    values, in Punch's slot; unarmed classes keep Punch.
+- **Monster damage scale**: three Rotting Guards killed the Warrior in 4 s at the
+  data's damage. Our own playability rule, not the game's: monster hit damage is
+  scaled to 50 % (`Poe2Monsters.DamageScalePercent`, env
+  `Game_POE2_MONSTER_DAMAGE`). No PoE2 rule lowering it was found: the zombie's
+  GESSPL 26777 (StatSet 1334 MeleeAtAnimationSpeed) has BaseMultiplier 0.
+
+**Live test (2026-11-04).** The Warrior entered Clearfell with the Wooden Club in
+the main hand (tooltip normal, slot not red). With Punch in the slot the clicks
+on a Rotting Guard sent nothing. With Default Attack bound from the picker, the
+clicks sent `01A5 … 0400 FF 08 …`, two Rotting Guards died (`0x1d3`, and their
+drops) and the third was hurt. At 50 % a Rotting Guard hits for about 6.
+
+Limits:
+- Bow and crossbow classes get Default Attack too, which their weapons do not
+  meet, and there are no projectiles; wand and staff classes (no weapon values)
+  keep Punch with the weapon in hand, which the client will likely refuse. Only
+  the Warrior was tested.
+- The weapon is given again at each entry; equipment is not saved and cannot be
+  moved.
+- The weapon's own basic attack (Mace Strike etc.) is not usable.

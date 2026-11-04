@@ -4,7 +4,7 @@ Read this first if you are picking up the PoE2 work. It covers where things stan
 from nothing, how to run a live test, and what to do next. The wave-by-wave findings (addresses, message layouts,
 live results) are in [PORTING-POE2.md](PORTING-POE2.md). This file points into it and does not repeat it.
 
-Last updated 2026-11-04, after wave 25.
+Last updated 2026-11-04, after wave 26.
 
 ## Where it stands
 
@@ -35,8 +35,9 @@ At 0 life the player dies, gets the death screen and can resurrect at the area's
 | Monster AI, player death | Aggro, chase (MoveTo `0x1e0`, no pathing), swings (`0x1c8`) and hits on the player; the death screen `0x6d`, resurrect C→S `0x6c` (teleport `0x1dd`) | `InstanceSessionPoe2.Monsters.cs`, `Poe2Monsters.AttackOf`; wave 23 |
 | Experience, levels | A kill's experience in the Player component (`0x2f9`); a new level raises and refills life and mana and is saved to Auth. The experience into a level is not saved | `InstanceSessionPoe2.Experience.cs`, `InstanceProgressionPoe2.cs`, `scripts/re/poe2/experience_levels.py`; wave 24 |
 | Drops, pickup | A kill may drop currency on the ground (`0x2f7` WorldItem, 35 % or `Game_POE2_DROP_CHANCE`); a click walks to it and puts it in the main inventory (`0x2fa`, `0xde`). The inventory is not saved | `InstanceSessionPoe2.Loot.cs`, `Poe2Inventory.cs`, `Poe2Items.cs`, `scripts/re/poe2/item_types.py`; wave 25 |
+| Starting weapon | The class's starting weapon in the main hand (`0xde` into Weapon1), drawn on the model, usable (Mods `+0x263` = 7) and swung with Default Attack at the weapon's values; monster damage scaled to 50 % (`Game_POE2_MONSTER_DAMAGE`). The weapon's own attack (Mace Strike) stays greyed; equipment is not saved | `Poe2StartingSkills.cs`, `InstanceSessionPoe2.Loot.cs`, `InstanceItems.cs`, `PlayerObjectPoe2.cs`, `Poe2Items.cs`; wave 26 |
 
-**Tests.** 635/635 pass:
+**Tests.** 643/643 pass:
 
 ```bash
 dotnet test tests/GameServer.Core.Tests -c Release
@@ -257,7 +258,8 @@ In rough order. Each is a wave of its own.
 1. **The rest of the character** (waves 16–17 did the name, class, level, life, mana and attributes):
    - why the HUD's mana starts near 32 whatever pool is sent (perhaps the second mana pool at `+0x330`);
    - the accuracy and spirit stat keys; passives and items;
-   - items: starting gear and saved equipment. The character screen's preview is mapped and encoded (wave 18,
+   - items: saved equipment, and the weapon's own basic attack (wave 26 swings the starting weapon with Default
+     Attack; Mace Strike stays greyed, PORTING-POE2.md wave 26). The character screen's preview is mapped and encoded (wave 18,
      `CharacterPreviewPoe2`, `LoginServerSession.Poe2Preview`) but has nothing to show yet. The in-game player's
      visible equipment (the Inventories component) is not mapped;
    - the act and premade start states (CharacterStartStates rows 12 on);
@@ -276,7 +278,7 @@ In rough order. Each is a wave of its own.
 
    Also open: the exit click, the town gates not drawn, C→S `0x362`.
 6. **Combat** (waves 21–24 did the skills, the attack, hits, monster death, monster AI, the player's death and
-   experience): loot (with items); monster pathing (the chase glides through walls), PoE2's monster damage rule. Then items, gems, passives, NPCs, waypoints and quests. PoE1's
+   experience, waves 25–26 drops and the starting weapon): monster pathing (the chase glides through walls), PoE2's monster damage rule. Then items, gems, passives, NPCs, waypoints and quests. PoE1's
    Gateway is the template; re-verify every id against PoE2.
 
 ## Wave index
@@ -284,28 +286,29 @@ In rough order. Each is a wave of its own.
 | Wave | Content | Commit |
 |---|---|---|
 | 0–2 | Recon, live handshake capture | upstream (`a3da89a` and earlier) |
-| — | Client static private key at SPKI+0x350 | `f4e3be2` |
-| 3 | Patched client accepts the local handshake | `1214844` |
-| 4 | Login dialect: `0x04`, `0x05`, `0x18` | `2101701` |
-| 5 | Character list `0x15`, Play `0x0e` | `34cbf83` |
-| 6 | `0x10`, `0x16`, instance assignment `0x14` | `722f7de` |
-| 7 | Instance opening | `7204692` |
-| 8 | Dispatcher, encryption switch, area message | `3d55c2a` |
-| 9 | Local player, enter area, create object | `70e8806` |
-| 10 | Player entity, inventories, HUD | `0234a4f` |
-| 11 | Lockstep server frames, world drawn | `375cbd1` |
-| 12 | Direction movement `0x63` / `0x64` | `efb933a` |
-| 13 | Gateway serves the PoE2 client | `a8a2ccc` |
-| 14 | Walkability, walls-aware walk estimate | `fb4576c` |
-| — | This handoff and its tools | `29d65c5` |
-| 15 | Auth logs the PoE2 Steam client in | `6200d53` |
-| 16 | Character creation, several characters, the saved character in game | `97628ee` |
-| 17 | The class's life, mana and attributes | `167fb9e` |
-| 18 | The character screen's preview blob | `cba781e` |
-| 19 | Exits, change of area, Clearfell | `25fee82` |
-| 20 | Monsters, the wake zone, pause | `2dd71ca` |
-| 21 | Skills, the skill bar, a targeted attack | `c28161f` |
-| 22 | Hits and monster death | `b4171db` |
-| 23 | Monster AI, the player's death | `85da914` |
-| 24 | Experience | `7553177` |
-| 25 | Monster drops, the pickup | the commit after `7553177` |
+| — | Client static private key at SPKI+0x350 | `75ec7da` |
+| 3 | Patched client accepts the local handshake | `d46d2d1` |
+| 4 | Login dialect: `0x04`, `0x05`, `0x18` | `af50ce8` |
+| 5 | Character list `0x15`, Play `0x0e` | `24bac9d` |
+| 6 | `0x10`, `0x16`, instance assignment `0x14` | `73d8229` |
+| 7 | Instance opening | `a7d5a91` |
+| 8 | Dispatcher, encryption switch, area message | `ae4526e` |
+| 9 | Local player, enter area, create object | `8512ad9` |
+| 10 | Player entity, inventories, HUD | `6bcbdb5` |
+| 11 | Lockstep server frames, world drawn | `9716c3a` |
+| 12 | Direction movement `0x63` / `0x64` | `a127b4d` |
+| 13 | Gateway serves the PoE2 client | `f4bdbf4` |
+| 14 | Walkability, walls-aware walk estimate | `2ab0c47` |
+| — | This handoff and its tools | `4c82166` |
+| 15 | Auth logs the PoE2 Steam client in | `8fc43e3` |
+| 16 | Character creation, several characters, the saved character in game | `414e331` |
+| 17 | The class's life, mana and attributes | `d8e0479` |
+| 18 | The character screen's preview blob | `d43585c` |
+| 19 | Exits, change of area, Clearfell | `2ccb9c0` |
+| 20 | Monsters, the wake zone, pause | `81e63c0` |
+| 21 | Skills, the skill bar, a targeted attack | `a23df43` |
+| 22 | Hits and monster death | `0c7e0c5` |
+| 23 | Monster AI, the player's death | `c4d6390` |
+| 24 | Experience | `d078b42` |
+| 25 | Monster drops, the pickup | `199bdc1` |
+| 26 | The starting weapon | the commit after `199bdc1` |
