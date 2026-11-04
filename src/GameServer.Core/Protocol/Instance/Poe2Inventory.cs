@@ -66,6 +66,17 @@ public sealed class Poe2Inventory(uint inventoryId, byte width, byte height)
         return InstanceInventoriesPoe2.InventoryChange(inventoryId, ++_revision, [entry.Id], []);
     }
 
+    /// <summary>Replaces an item in its cell (a stack or charges that changed): the old id leaves, the new item comes
+    /// with a new id. Null for an id not here.</summary>
+    public byte[]? Replace(uint itemId, Item item)
+    {
+        if (_items.FirstOrDefault(e => e.Id == itemId) is not { } entry) return null;
+        int at = _items.IndexOf(entry);
+        var renewed = entry with { Id = _nextId++, Item = item };
+        _items[at] = renewed;   // the order stays: the flask bar's slots are read by position
+        return InstanceInventoriesPoe2.InventoryChange(inventoryId, ++_revision, [entry.Id], [new InventoryItem(renewed.Id, renewed.X, renewed.Y, item)]);
+    }
+
     /// <summary>Puts a saved item back at its cell when the cell is free; null when it is not (nothing changes).</summary>
     public byte[]? Restore(Item item, byte itemWidth, byte itemHeight, byte x, byte y)
     {

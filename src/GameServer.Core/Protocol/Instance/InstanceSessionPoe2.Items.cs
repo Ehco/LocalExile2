@@ -15,13 +15,14 @@ public sealed partial class InstanceSessionPoe2
     /// <summary>The item held on the cursor, if any.</summary>
     public Poe2Inventory.Entry? Held { get { lock (_lock) return _cursor.Items.FirstOrDefault(); } }
 
-    /// <summary>The main inventory and the cursor as the character record keeps them.</summary>
+    /// <summary>The main inventory, the cursor and the flasks as the character record keeps them.</summary>
     public IReadOnlyList<SavedItem> SavedItems { get { lock (_lock) return SaveItems(); } }
 
     private IReadOnlyList<SavedItem> SaveItems() =>
     [
         .. _mainInventory.Items.Select(e => new SavedItem(_mainInventory.InventoryId, e.X, e.Y, e.Item.TypeHash, e.Item.StackSize)),
         .. _cursor.Items.Select(e => new SavedItem(_cursor.InventoryId, e.X, e.Y, e.Item.TypeHash, e.Item.StackSize)),
+        .. _flasks.Items.Select(e => new SavedItem(_flasks.InventoryId, e.X, e.Y, e.Item.TypeHash, e.Item.StackSize)),
     ];
 
     // The saved items take their cells again (0xde on entering, after the starting weapon); what was on the cursor goes
@@ -33,6 +34,12 @@ public sealed partial class InstanceSessionPoe2
         foreach (var saved in items ?? [])
         {
             if (_itemTypesByHash.GetValueOrDefault(saved.TypeHash) is not { } type) continue;
+            if (saved.InventoryId == _flasks.InventoryId && type.Flask is not null)
+            {
+                // A flask comes back full (a relog is a town visit's worth of refill).
+                if (_flasks.Restore(Poe2Items.CreateFlask(type), type.Width, type.Height, saved.X, saved.Y) is { } refilled) _flaskChanges.Add(refilled);
+                continue;
+            }
             var item = Poe2Items.Create(type, saved.Stack);
             byte[]? change = saved.InventoryId == _mainInventory.InventoryId
                 ? _mainInventory.Restore(item, type.Width, type.Height, saved.X, saved.Y) ?? _mainInventory.Add(item, type.Width, type.Height, type.MaxStack)

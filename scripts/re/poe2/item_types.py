@@ -4,7 +4,7 @@ data needs.
     python scripts/re/poe2/item_types.py
 
 - The types: every BaseItemTypes row under Metadata/Items/Currency/, Metadata/Items/Gems/ and Metadata/Items/Gem/ (the gems,
-  wave 30) with a name players see (not "[DNT]").
+  wave 30) and Metadata/Items/Flasks/ (the flasks, wave 32) with a name players see (not "[DNT]").
 - hash: the row's HASH32, the item data's first u32 (the reader 0x1421ecfc0 looks the type up by it).
 - visualIdentity: the ItemVisualIdentity row's HASH16, the Base component's first u16 (0x1425a0e50).
 - components: the .it chain merged as ot_components.merge_items does for PoE1 (parent-first, nothing first, "client"
@@ -34,6 +34,8 @@ OUT = os.path.join(dat.REPO, "data", "poe2", "item-types.json")
 PREFIX = "Metadata/Items/Currency/"
 # The skill, support and uncut gems (wave 30): the gem window cuts an uncut gem into a skill gem that sits in a skill slot.
 GEM_PREFIXES = ("Metadata/Items/Gems/", "Metadata/Items/Gem/")
+# The flasks (wave 32): life and mana flasks, with Flasks.datc64 and ComponentCharges.datc64 values.
+FLASK_PREFIX = "Metadata/Items/Flasks/"
 
 
 def load(types):
@@ -88,10 +90,26 @@ def starting_weapons(bases):
     return out
 
 
+def flask_values():
+    """Extra fields of the flasks, by BaseItemTypes row: Flasks (life / mana per use, the recovery time in tenths of a
+    second) and ComponentCharges (the charges and what a use costs)."""
+    out = {}
+    for f in dat.table("Flasks"):
+        out[f["BaseItemType"]] = {"flask": {"type": f["Type"], "lifePerUse": f["LifePerUse"], "manaPerUse": f["ManaPerUse"],
+                                            "recoveryTenths": f["RecoveryTime"]}}
+    ids = {r["Id"]: r["_row"] for r in dat.table("BaseItemTypes")}
+    for c in dat.table("ComponentCharges"):
+        row = ids.get(c["BaseItemTypesKey"])
+        if row is not None and row in out:
+            out[row]["flask"].update({"maxCharges": c["MaxCharges"], "perCharge": c["PerCharge"]})
+    return out
+
+
 def main():
     bases = dat.table("BaseItemTypes")
     starts = starting_weapons(bases)
-    rows = [r for r in bases if r["Id"].startswith((PREFIX, *GEM_PREFIXES)) and r["Name"] and not r["Name"].startswith("[DNT]")]
+    rows = [r for r in bases if r["Id"].startswith((PREFIX, *GEM_PREFIXES, FLASK_PREFIX)) and r["Name"] and not r["Name"].startswith("[DNT]")]
+    flasks = flask_values()
     rows += [bases[row] for row in sorted(starts)]
     visuals = dat.table("ItemVisualIdentity")
     stacks = {r["BaseItemType"]: r["StackSize"] for r in dat.table("CurrencyItems") if r["BaseItemType"] is not None}
@@ -111,7 +129,7 @@ def main():
                     "height": r["Height"], "dropLevel": r["DropLevel"],
                     "visualIdentity": visuals[visual]["HASH16"] if visual is not None else 0,
                     "components": m["components"][:m["read"]], "maxStack": stacks.get(r["_row"], 1),
-                    **starts.get(r["_row"], {})})
+                    **starts.get(r["_row"], {}), **flasks.get(r["_row"], {})})
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(OUT, "w", encoding="utf-8") as f:
         f.write("[\n" + ",\n".join(" " + json.dumps(r, separators=(",", ":")) for r in out) + "\n]\n")

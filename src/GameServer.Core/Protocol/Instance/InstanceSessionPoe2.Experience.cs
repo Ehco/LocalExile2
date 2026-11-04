@@ -47,7 +47,7 @@ public sealed partial class InstanceSessionPoe2
         if (level <= _level) { ProgressChanged(); yield break; }
         _level = level;
         var sheet = CurrentSheet();
-        (_maximumLife, _maximumMana, _playerLife) = (sheet.MaximumLife, sheet.MaximumMana, sheet.MaximumLife);
+        (_maximumLife, _maximumMana, _playerLife, _playerMana) = (sheet.MaximumLife, sheet.MaximumMana, sheet.MaximumLife, sheet.MaximumMana);
         yield return InstanceCombatPoe2.StatsUpdate(PlayerId, sheet.Stats);
         yield return InstanceCombatPoe2.LifeUpdate(PlayerId, _maximumLife);
         yield return InstanceCombatPoe2.LifeUpdate(PlayerId, _maximumMana, InstanceCombatPoe2.ManaPool);

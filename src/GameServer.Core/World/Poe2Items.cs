@@ -17,7 +17,17 @@ public static class Poe2Items
     public sealed record ItemType(string Id, int Row, string Name, uint Hash, byte Width, byte Height, int DropLevel,
         ushort VisualIdentity, string[] Components, int MaxStack = 1, int? ItemClass = null, byte? Stance = null,
         WeaponValues? Weapon = null, int[]? StartingClasses = null, BasicAttack? Attack = null,
-        int? Wieldable = null);
+        int? Wieldable = null, FlaskValues? Flask = null);
+
+    /// <summary>Flasks.datc64 and ComponentCharges.datc64 (wave 32): the flask's type (1 life, 2 mana), what a use
+    /// recovers over <paramref name="RecoveryTenths"/> tenths of a second, the charges it holds and a use's cost.</summary>
+    public sealed record FlaskValues(int Type, int LifePerUse, int ManaPerUse, int RecoveryTenths, int MaxCharges, int PerCharge);
+
+    /// <summary>The two flasks a new PoE2 character has.</summary>
+    public const string LesserLifeFlask = "Metadata/Items/Flasks/FourFlaskLife1", LesserManaFlask = "Metadata/Items/Flasks/FourFlaskMana1";
+
+    /// <summary>A flask of the type, full of charges.</summary>
+    public static Item CreateFlask(ItemType type) => Create(type) with { Charges = type.Flask?.MaxCharges ?? 0 };
 
     /// <summary>WeaponTypes: damage, attack time, reach in cells and critical chance (hundredths of a percent).</summary>
     public sealed record WeaponValues(int MinimumDamage, int MaximumDamage, int AttackMs, int Range, int Critical);

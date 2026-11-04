@@ -2226,3 +2226,36 @@ the chunks; a wrong order shows as a refused move), a swap, a stack merge,
 Shift-click, and the inventory after a relog. The gem panel's `0x39`
 (`0x140aa14a3`) on a socketed gem is not answered: the skill list cannot
 remove a skill.
+
+## Wave 32 — flasks (2026-11-05)
+
+Written without a live test. Code: `InstanceFlasksPoe2.cs`,
+`InstanceSessionPoe2.Flasks.cs`, `Poe2Items.FlaskValues` / `CreateFlask`,
+`Poe2Inventory.Replace`, `item_types.py` (the flasks).
+
+- **The data.** `Flasks.datc64` (31 rows: Type 1 life / 2 mana, LifePerUse,
+  ManaPerUse, RecoveryTime in tenths of a second) and `ComponentCharges.datc64`
+  (MaxCharges, PerCharge, by base item): Lesser Life Flask
+  (`Metadata/Items/Flasks/FourFlaskLife1`, BaseItemTypes 2623) recovers 50
+  life over 3 s, 60 charges, 10 a use; Lesser Mana Flask (`FourFlaskMana1`,
+  2632) 50 mana over 2 s. The .it chain is Base, Quality, LocalStats,
+  Charges, Mods, Usable, Flask (1 × 2); `item_types.py` writes them with a
+  `flask` object. The flask bar is Inventories row 11 `Flask1` (type 10, 5 ×
+  2), id 12.
+- **C→S `0x70`, use a flask** (11 bytes; the flask bar `0x14047775d` →
+  `0x142110150(session, inventory, item)`, writer `0x141f38ae0` "2 1 4 4"):
+  u8 route, u32 BE the bar's inventory id (`+0x6f0`), u32 BE the flask's item
+  id (the builder looks the item up by id in the inventory, `0x141cf1b70`).
+  PoE1's `0x70` named a slot in 6 bytes.
+- **The server** gives a new character the two flasks full (0xde on
+  entering, after the inventory), spends a use's charges (the flask sent
+  again, 0xde) and recovers the amount over the flask's time in the ticks
+  (0x1cf life, or the mana pool 4; the server now keeps a mana value, which
+  nothing spends yet); a flask without the charges does nothing. Every kill
+  gives each flask 1 charge (ours; PoE2's number is a flask stat) and
+  resurrecting refills them. The flasks are saved with the inventory (their
+  cell and type; they come back full).
+
+To check live: the id and its two fields; whether the client expects the
+Charges component as PoE1's signed compact (the item would not parse
+otherwise) and shows the recovery; the flask bar's slots (PoE2 shows two).

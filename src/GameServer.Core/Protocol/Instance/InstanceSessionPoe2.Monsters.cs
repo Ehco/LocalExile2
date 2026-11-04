@@ -138,6 +138,7 @@ public sealed partial class InstanceSessionPoe2
             InstanceCombatPoe2.LifeUpdate(PlayerId, _playerLife),
             InstanceMovementPoe2.Teleport(PlayerId, _player.GridX, _player.GridY),
         };
+        sent.AddRange(RefillFlasks());
         for (int i = 0; i < _monsters.Count; i++)
         {
             var s = _monsterStates[i];

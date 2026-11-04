@@ -38,6 +38,7 @@ public sealed partial class InstanceSessionPoe2
         [InstancePassivesPoe2.ConfirmAltId] = InstancePassivesPoe2.ConfirmLength, [0x16] = 7, [0x137] = 4,
         [InstanceGemsPoe2.CutGemId] = InstanceGemsPoe2.CutGemLength, [InstanceGemsPoe2.CutGemIntoSlotId] = InstanceGemsPoe2.CutGemIntoSlotLength,
         [InstanceItemsPoe2.PickUpId] = InstanceItemsPoe2.PickUpLength, [InstanceItemsPoe2.PlaceId] = InstanceItemsPoe2.PlaceLength,
+        [InstanceFlasksPoe2.UseFlaskId] = InstanceFlasksPoe2.UseFlaskLength,
         [0x173] = 3, [0x17a] = 3, [0x1ac] = 3,
         [0x221] = 3, [0x23d] = 4, [InstanceProtocolPoe2.PauseRequestId] = 4, [0x2e6] = 4, [0x357] = 3,
         [InstanceProtocolPoe2.LeavingId] = 3,
@@ -77,7 +78,8 @@ public sealed partial class InstanceSessionPoe2
     /// <paramref name="startingGem"/> sockets the class's starting gem for a character with no gem (as PoE2 does);
     /// <paramref name="startingUncutGem"/> puts an Uncut Skill Gem (Level 1) in its inventory instead (for tests).</param>
     /// <param name="items">The character's saved inventory (<see cref="SavedItem"/>); <paramref name="onItems"/> gets the
-    /// whole inventory to save after each change (a pickup, a move, a gem cut).</param>
+    /// whole inventory to save after each change (a pickup, a move, a gem cut). <paramref name="startingFlasks"/> gives a
+    /// character without flasks the two a new PoE2 character has.</param>
     public InstanceSessionPoe2(PlayerObjectPoe2 player, string objectType = DefaultObjectType, uint playerId = DefaultPlayerId,
         double walkSpeed = DirectionWalk.DefaultSpeed, Func<int, int, bool>? walkable = null,
         IReadOnlyList<AreaTransitionObjectPoe2>? exits = null, IReadOnlyList<Poe2Monster>? monsters = null,
@@ -89,7 +91,8 @@ public sealed partial class InstanceSessionPoe2
         IEnumerable<int>? passives = null, Action<IReadOnlyCollection<int>>? onPassives = null, ushort questPassivePoints = 0,
         Poe2Passives? passiveNodes = null, uint gold = 0, Action<uint, uint>? onProgress = null,
         IEnumerable<int>? gems = null, Action<IReadOnlyCollection<int>>? onGems = null, Poe2Gems? gemTable = null, bool startingGem = false,
-        bool startingUncutGem = false, IEnumerable<SavedItem>? items = null, Action<IReadOnlyList<SavedItem>>? onItems = null)
+        bool startingUncutGem = false, IEnumerable<SavedItem>? items = null, Action<IReadOnlyList<SavedItem>>? onItems = null,
+        bool startingFlasks = false)
     {
         _onProgress = onProgress;
         (_player, _objectType, PlayerId, _exits, _monsters) = (player, objectType, playerId, exits ?? [], monsters ?? []);
@@ -102,6 +105,7 @@ public sealed partial class InstanceSessionPoe2
         InitExperience(levelStarts, onLevel);
         InitLoot(itemTypes, weapon);
         InitItems(items, onItems);
+        InitFlasks(startingFlasks);
         InitGems(gems, gemTable, onGems, startingGem, startingUncutGem);
         InitMonsters();
     }
@@ -178,6 +182,7 @@ public sealed partial class InstanceSessionPoe2
         if (InWorld && InstanceGemsPoe2.ReadCutGem(message) is { } cut) return CutGem(cut);
         if (InWorld && InstanceItemsPoe2.ReadPickUp(message) is { } pickUp) return PickUpItem(pickUp);
         if (InWorld && InstanceItemsPoe2.ReadPlace(message) is { } place) return PlaceItem(place);
+        if (InWorld && InstanceFlasksPoe2.ReadUseFlask(message) is { } flask) return UseFlask(flask, now);
         if (InWorld && InstanceSkillsPoe2.ReadUseSkill(message, out _) is { TargetId: { } item } pick && _groundItems.ContainsKey(item))
             return BeginPickup(item, pick, now);
         if (InWorld && InstanceSkillsPoe2.ReadUseSkill(message, out _) is { TargetId: { } npc } talk && IsUsable(npc))
@@ -265,7 +270,7 @@ public sealed partial class InstanceSessionPoe2
             yield return InstanceCombatPoe2.StatsUpdate(MonsterId(a.Monster), [(InstanceCombatPoe2.HideMiniLifeBar, 1)]);
         yield return InstanceCombatPoe2.LifeUpdate(MonsterId(a.Monster), _monsterLife[a.Monster]);
         if (_monsterLife[a.Monster] == 0)
-            foreach (var m in GainExperience(a.Monster).Concat(DropLoot(a.Monster, now))) yield return m;
+            foreach (var m in GainExperience(a.Monster).Concat(DropLoot(a.Monster, now)).Concat(FlaskChargesOnKill())) yield return m;
     }
 
     // Skill bar: slot → skill id, as the client set it (C→S 0x5c).
@@ -300,6 +305,7 @@ public sealed partial class InstanceSessionPoe2
             sent.AddRange(TalkTick(now));
             sent.AddRange(WaypointTick(now));
             sent.AddRange(MonsterTick(now));
+            sent.AddRange(FlaskTick(now));
             if (ExitTick(now) is { } change) sent.Add(change);
             return sent;
         }
@@ -329,6 +335,7 @@ public sealed partial class InstanceSessionPoe2
             InstanceInventoriesPoe2.AddInventory(InstanceInventoriesPoe2.InventoryId(slot.Row), slot))],
         .. EquipmentMessages(),
         .. ItemMessages(),
+        .. FlaskMessages(),
         .. GemMessages(),
         InstanceProtocolPoe2.EnterArea(PlayerId),
         InstanceProtocolPoe2.FrameLength(FrameMs),
