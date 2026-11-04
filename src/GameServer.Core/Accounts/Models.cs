@@ -19,11 +19,13 @@ public enum CharacterClass { Scion, Marauder, Ranger, Witch, Duelist, Templar, S
 /// "set_quest_flags" (PORTING-POE2.md, wave 27). PoE1 keeps its own in the character saves.</param>
 /// <param name="Waypoints">PoE2: the WorldAreas Ids whose waypoint the character has activated ("set_waypoints").</param>
 /// <param name="Passives">PoE2: the allocated passive nodes (PassiveSkillGraphIds, "set_passives"; wave 28).</param>
+/// <param name="Experience">PoE2: the character's total experience and <paramref name="Gold"/> its gold
+/// ("set_progress"; wave 29). PoE1 keeps both in the character saves.</param>
 public sealed record Character(
     Guid Id, Guid AccountId, string Name, CharacterClass Class, int Level,
     string League, string AreaId, DateTimeOffset CreatedUtc, DateTimeOffset LastPlayedUtc, string? LastTown = null,
     ushort Portrait = 0, HardcoreDeathRecord? HardcoreDeath = null, IReadOnlyList<string>? QuestFlags = null,
-    IReadOnlyList<string>? Waypoints = null, IReadOnlyList<int>? Passives = null);
+    IReadOnlyList<string>? Waypoints = null, IReadOnlyList<int>? Passives = null, uint Experience = 0, uint Gold = 0);
 
 /// <summary>A committed Hardcore death. The source league is retained after migration; Ruthless deaths are terminal.
 /// Stored with the account's character record, separately from mutable inventory/progress saves.</summary>

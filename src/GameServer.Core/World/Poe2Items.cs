@@ -69,6 +69,23 @@ public static class Poe2Items
         ("Metadata/Items/Currency/CurrencyAddModToMagic", 15),      // Orb of Augmentation
     ];
 
+    /// <summary>PoE2's gold, a pile on the ground that the character's gold takes (BaseItemTypes row 1943).</summary>
+    public const string GoldCoin = "Metadata/Items/Currency/GoldCoin";
+
+    /// <summary>The chance (percent) that a normal monster drops a gold pile, and the pile's size: our own numbers, not
+    /// PoE2's (wave 29).</summary>
+    public const int GoldDropChance = 50, GoldPerLevelMinimum = 2, GoldPerLevelMaximum = 4, GoldBaseMinimum = 3, GoldBaseMaximum = 8;
+
+    /// <summary>A kill's gold pile, or null: with <see cref="GoldDropChance"/>, a stack of <see cref="GoldCoin"/> of
+    /// <see cref="GoldBaseMinimum"/> + <see cref="GoldPerLevelMinimum"/> × level to <see cref="GoldBaseMaximum"/> +
+    /// <see cref="GoldPerLevelMaximum"/> × level coins; nothing without the gold item type.</summary>
+    public static Item? RollGold(IReadOnlyDictionary<string, ItemType> types, int monsterLevel, Random random)
+    {
+        if (!types.TryGetValue(GoldCoin, out var gold) || random.Next(100) >= GoldDropChance) return null;
+        int level = Math.Max(1, monsterLevel);
+        return Create(gold, random.Next(GoldBaseMinimum + GoldPerLevelMinimum * level, GoldBaseMaximum + GoldPerLevelMaximum * level + 1));
+    }
+
     /// <summary>A kill's drop, or null: one item of <see cref="Drops"/> whose drop level the monster reaches, with
     /// <see cref="DropChance"/>.</summary>
     public static Item? Roll(IReadOnlyDictionary<string, ItemType> types, int monsterLevel, Random random)

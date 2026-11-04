@@ -8,6 +8,7 @@ public sealed partial class InstanceSessionPoe2
 {
     private IReadOnlyList<uint> _levelStarts = [];
     private Action<int>? _onLevel;
+    private Action<uint, uint>? _onProgress;
     private uint _experience;
     private int _level;
     private int _maximumLife;
@@ -26,6 +27,9 @@ public sealed partial class InstanceSessionPoe2
         (_maximumLife, _maximumMana) = ((int)_player.Life, (int)_player.Mana);
     }
 
+    // The experience and the gold go to the save together whenever either moves (wave 29).
+    private void ProgressChanged() => _onProgress?.Invoke(_experience, _gold);
+
     // A kill's experience, as PoE1's server: DefaultMonsterStats' Experience at the monster's level × the variety's
     // ExperienceMultiplier, with the level penalty (S→C 0x2f9 on the player). A new level refills life and mana at the
     // class's new maximums.
@@ -40,7 +44,7 @@ public sealed partial class InstanceSessionPoe2
         _experience = after;
         yield return InstanceProgressionPoe2.PlayerExperience(PlayerId, _experience);
         int level = Progression.LevelFor(_experience, _levelStarts);
-        if (level <= _level) yield break;
+        if (level <= _level) { ProgressChanged(); yield break; }
         _level = level;
         var sheet = CurrentSheet();
         (_maximumLife, _maximumMana, _playerLife) = (sheet.MaximumLife, sheet.MaximumMana, sheet.MaximumLife);
@@ -49,5 +53,6 @@ public sealed partial class InstanceSessionPoe2
         yield return InstanceCombatPoe2.LifeUpdate(PlayerId, _maximumMana, InstanceCombatPoe2.ManaPool);
         yield return PassivesMessage();
         _onLevel?.Invoke(level);
+        ProgressChanged();
     }
 }

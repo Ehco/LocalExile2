@@ -237,6 +237,19 @@ public sealed class AccountService(IAccountStore store, TimeProvider? clock = nu
         }
     }
 
+    /// <summary>Sets a PoE2 character's total experience and gold, found by name (wave 29).</summary>
+    public Result<Character> SetProgress(string characterName, uint experience, uint gold)
+    {
+        lock (_gate)
+        {
+            var c = store.FindCharacter(characterName);
+            if (c is null) return Result<Character>.Fail(AuthError.NotFound);
+            var u = c with { Experience = experience, Gold = gold };
+            store.UpdateCharacter(u);
+            return Result<Character>.Success(u);
+        }
+    }
+
     /// <summary>Records the character's worn portrait variation (0 = the class's own), found by name.</summary>
     public Result<Character> SetPortrait(string characterName, ushort portrait)
     {

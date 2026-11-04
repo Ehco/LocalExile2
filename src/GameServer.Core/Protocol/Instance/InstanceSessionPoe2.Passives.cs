@@ -95,6 +95,8 @@ public sealed partial class InstanceSessionPoe2
         if (cost > _gold) return [PassivesMessage(), GoldMessage()];
         _gold -= (uint)cost;
         foreach (ushort node in nodes) _passives.Remove(node);
-        return [.. PassivesChanged(), GoldMessage()];
+        var reply = PassivesChanged();
+        ProgressChanged();
+        return [.. reply, GoldMessage()];
     }
 }

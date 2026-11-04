@@ -53,15 +53,23 @@ public sealed partial class InstanceSessionPoe2
         if (_weaponChange is { } change) yield return change;
     }
 
-    // A kill's drop (Poe2Items.Roll) where the monster fell: a WorldItem object (S→C 0x2f7).
+    // A kill's drops where the monster fell, each a WorldItem object (S→C 0x2f7): a currency item (Poe2Items.Roll) and
+    // a gold pile (Poe2Items.RollGold; wave 29), rolled in that order on the session's generator.
     private IEnumerable<byte[]> DropLoot(int monster, double now)
     {
-        if (Poe2Items.Roll(_itemTypes, _monsters[monster].Level, _random) is not { } item) yield break;
+        int level = _monsters[monster].Level;
+        var item = Poe2Items.Roll(_itemTypes, level, _random);
+        var gold = Poe2Items.RollGold(_itemTypes, level, _random);
+        if (item is null && gold is null) yield break;
         var at = MonsterCell(monster, now);
-        var ground = new WorldItemObjectPoe2(at.X, at.Y, item);
-        uint id = _nextItemId++;
-        _groundItems[id] = ground;
-        yield return InstanceProtocolPoe2.CreateObject(id, InstanceEntities.ObjectTypeHash(WorldItemObjectPoe2.MetadataPath), ground.Blob());
+        foreach (var drop in new[] { item, gold })
+        {
+            if (drop is null) continue;
+            var ground = new WorldItemObjectPoe2(at.X, at.Y, drop);
+            uint id = _nextItemId++;
+            _groundItems[id] = ground;
+            yield return InstanceProtocolPoe2.CreateObject(id, InstanceEntities.ObjectTypeHash(WorldItemObjectPoe2.MetadataPath), ground.Blob());
+        }
     }
 
     // A click on a ground item (C→S 0x1a5 with the interaction 0x2000c266 and the item as the target): echoed at once, as
@@ -88,7 +96,8 @@ public sealed partial class InstanceSessionPoe2
         _pickup = null;
     }
 
-    // On arrival the item leaves the ground (S→C 0x2fa) for the main inventory (0xde); with no room it stays.
+    // On arrival the item leaves the ground (S→C 0x2fa) for the main inventory (0xde); with no room it stays. A gold
+    // pile goes to the character's gold instead (0x2db; wave 29).
     private IEnumerable<byte[]> PickupTick(double now)
     {
         if (_pickup is not { } p || now < p.Arrive) yield break;
@@ -96,6 +105,15 @@ public sealed partial class InstanceSessionPoe2
         if (p.Stop != p.From) Walk.Place(p.Stop.X, p.Stop.Y, now);
         if (!_groundItems.TryGetValue(p.Item, out var ground)) yield break;
         var type = _itemTypesByHash.GetValueOrDefault(ground.Item.TypeHash);
+        if (type?.Id == Poe2Items.GoldCoin)
+        {
+            _gold = (uint)Math.Min(uint.MaxValue, (ulong)_gold + ground.Item.StackSize);
+            _groundItems.Remove(p.Item);
+            yield return InstanceProtocolPoe2.RemoveObject(p.Item);
+            yield return GoldMessage();
+            ProgressChanged();
+            yield break;
+        }
         if (_mainInventory.Add(ground.Item, type?.Width ?? 1, type?.Height ?? 1, type?.MaxStack ?? 1) is not { } change) yield break;
         _groundItems.Remove(p.Item);
         yield return InstanceProtocolPoe2.RemoveObject(p.Item);

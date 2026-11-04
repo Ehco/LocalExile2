@@ -161,6 +161,21 @@ public class InstancePassivesPoe2Tests
     }
 
     [Fact]
+    public void A_refund_reports_the_gold_to_save()
+    {
+        var progress = new List<(uint Experience, uint Gold)>();
+        var player = new PlayerObjectPoe2(GridX: 200, GridY: 200, Life: 58, Mana: 48, ClassRow: 6);
+        var session = new InstanceSessionPoe2(player, questPassivePoints: 2, passiveNodes: Nodes, gold: 100,
+            onProgress: (e, g) => progress.Add((e, g)));
+        session.Handle(AreaGenerated, 0);
+        session.Handle(Allocate(MeleeDamage), 0);
+
+        session.Handle(Refund(MeleeDamage), 0);
+
+        Assert.Equal([(0u, 85u)], progress);
+    }
+
+    [Fact]
     public void A_refund_of_a_node_not_allocated_changes_nothing()
     {
         var session = InWorld(2, gold: 100);

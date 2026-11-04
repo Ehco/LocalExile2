@@ -4,9 +4,9 @@ Read this first if you are picking up the PoE2 work. It covers where things stan
 from nothing, how to run a live test, and what to do next. The wave-by-wave findings (addresses, message layouts,
 live results) are in [PORTING-POE2.md](PORTING-POE2.md). This file points into it and does not repeat it.
 
-Last updated 2026-11-04, after wave 28 (the passive skill tree), tested live: nodes and attribute nodes allocate,
-stay allocated, are saved and move the character sheet. Quest passive points are a Gateway knob, not PoE2's quest
-rewards (see "Wave 28 follow-ups").
+Last updated 2026-11-05, after wave 29 (experience and gold saved, gold piles), **not tested live**: wave 28 (the
+passive skill tree) was, except the refund click (see "Wave 28 follow-ups"). First thing: run a live test of wave
+29 (PORTING-POE2.md, its "To check live" list).
 
 ## Where it stands
 
@@ -38,13 +38,13 @@ passive tree allocates and refunds nodes, saves them, and their stats reach the 
 | Skills, skill bar, attacks | Punch and the dodge roll in the Actor; the picker's list `0x66`, slot binding `0x5c`, skill use `0x1a5` echoed with `0x1c8` for targeted uses. No damage; slots kept per session only | `SkillsPoe2.cs`, `Poe2StartingSkills.cs`, `InstanceSkillsPoe2.cs`, `scripts/re/poe2/dat.py`; wave 21 |
 | Hits, monster death | Punch hits land after the approach (`0x1cf` life, `0x1d3` stats); monster life from DefaultMonsterStats × LifeMultiplier; death at 0. No loot, no action hit `0x1fb` | `InstanceCombatPoe2.cs`, `InstanceSessionPoe2.cs`, `Poe2Monsters.cs`; wave 22 |
 | Monster AI, player death | Aggro, chase (MoveTo `0x1e0`, no pathing), swings (`0x1c8`) and hits on the player; the death screen `0x6d`, resurrect C→S `0x6c` (teleport `0x1dd`) | `InstanceSessionPoe2.Monsters.cs`, `Poe2Monsters.AttackOf`; wave 23 |
-| Experience, levels | A kill's experience in the Player component (`0x2f9`); a new level raises and refills life and mana and is saved to Auth. The experience into a level is not saved | `InstanceSessionPoe2.Experience.cs`, `InstanceProgressionPoe2.cs`, `scripts/re/poe2/experience_levels.py`; wave 24 |
-| Drops, pickup | A kill may drop currency on the ground (`0x2f7` WorldItem, 35 % or `Game_POE2_DROP_CHANCE`); a click walks to it and puts it in the main inventory (`0x2fa`, `0xde`). The inventory is not saved | `InstanceSessionPoe2.Loot.cs`, `Poe2Inventory.cs`, `Poe2Items.cs`, `scripts/re/poe2/item_types.py`; wave 25 |
+| Experience, levels | A kill's experience in the Player component (`0x2f9`); a new level raises and refills life and mana and is saved to Auth; the total experience and the gold are saved at each change (`set_progress`, wave 29, untested live) | `InstanceSessionPoe2.Experience.cs`, `InstanceProgressionPoe2.cs`, `scripts/re/poe2/experience_levels.py`; waves 24, 29 |
+| Drops, pickup | A kill may drop currency on the ground (`0x2f7` WorldItem, 35 % or `Game_POE2_DROP_CHANCE`) and a gold pile (50 %, wave 29, untested live); a click walks to it and puts it in the main inventory (`0x2fa`, `0xde`), a gold pile into the character's gold (`0x2db`). The inventory is not saved | `InstanceSessionPoe2.Loot.cs`, `Poe2Inventory.cs`, `Poe2Items.cs`, `scripts/re/poe2/item_types.py`; waves 25, 29 |
 | Starting weapon | The class's starting weapon in the main hand (`0xde` into Weapon1), drawn on the model, usable (Mods `+0x263` = 7) and swung with Default Attack at the weapon's values; monster damage scaled to 50 % (`Game_POE2_MONSTER_DAMAGE`). The weapon's own attack (Mace Strike, skill `0x104`, weapon set I source `0x40`) is granted and usable since the Actor's weapon records go out again (`0x324`); equipment is not saved | `Poe2StartingSkills.cs`, `InstanceSkillsPoe2.cs`, `InstanceSessionPoe2.Loot.cs`, `InstanceItems.cs`, `PlayerObjectPoe2.cs`, `Poe2Items.cs`; wave 26 and its follow-up |
 | NPCs, dialogue, quest flags, waypoints | The town's NPCs, waypoint, stash and well are drawn; a click on an NPC opens its dialogue (`0xa3`), its options (`0xa1` / `0xa4`) set the quest flags (start, finish and Script flags) and play their talks, Buy opens an empty buy window (`0xaf`). The flags are saved per character (Auth), sent as a Player update (`0x2f9`) and recompute the NPCs' states (objects created again). The waypoint activates (town, click, 25 cells; `0x5a`), opens the World panel (`0x98`) and travels (`0x5b` → `0x2f1`, arrival by the waypoint), all live. No shop stock | `ServerObjectPoe2.cs`, `Poe2ServerObjects.cs`, `Poe2Quests.cs`, `InstanceSessionPoe2.Npcs.cs`, `InstanceSessionPoe2.Quests.cs`, `InstanceNpcsPoe2.cs`, `InstanceQuestsPoe2.cs`, `InstanceWaypointsPoe2.cs`, `scripts/re/poe2/server_objects.py`, `quests.py`; wave 27 |
 | Passive skill tree | The tree screen shows the character's nodes (`0x3a`), allocates (`0x3c`, with the attribute chosen); the allocations are saved per character (Auth `set_passives`) and their stats fold into the sheet (`0x1d3`). Points: (level − 1) + `Game_POE2_PASSIVE_POINTS`. The gold goes out (`0x2db`, `Game_POE2_GOLD`) and refunds (`0x3e`, `0x48`) cost GoldRespecPrices' gold server-side, but the client does not let a refund click through yet; no quest rewards, weapon sets, jewels or ascendancies | `InstancePassivesPoe2.cs`, `InstanceSessionPoe2.Passives.cs`, `Poe2Passives.cs`, `Poe2CharacterStats.cs`, `scripts/re/poe2/passives.py`, `scripts/re/frida/poe2-trace-refund.js`; wave 28 |
 
-**Tests.** 704/704 pass:
+**Tests.** 708/708 pass:
 
 ```bash
 dotnet test tests/GameServer.Core.Tests -c Release
@@ -346,7 +346,7 @@ flag set, the `+0xaa` field). The server side (`0x3e` / `0x48`, the cost, `0x2db
   (both sent as 0); jewel sockets; ascendancy nodes and the IsMultipleChoice nodes; `0x46` / `0x47` (`0x360` /
   `0x361`).
 - A node's SkillPointsGranted is counted by the client (`+0x2d0`) but not by the server's points.
-- Gold is a per-entry knob (`Game_POE2_GOLD`), not dropped by monsters nor saved (see wave 29).
+- Gold: wave 29 drops it and saves it (untested live); `Game_POE2_GOLD` only seeds a character without any.
 
 ## Next steps
 
@@ -355,6 +355,8 @@ In rough order. Each is a wave of its own.
 1. **The rest of the character** (waves 16–17 did the name, class, level, life, mana and attributes):
    - why the HUD's mana starts near 32 whatever pool is sent (perhaps the second mana pool at `+0x330`);
    - the accuracy and spirit stat keys; items;
+   - the inventory: moving items (C→S message unmapped), saved inventory and equipment (the experience and gold are,
+     wave 29);
    - items: saved equipment and the weapon swap (wave 26 and its follow-up give the starting weapon, Default Attack and
      the weapon's own attack, PORTING-POE2.md). The character screen's preview is mapped and encoded (wave 18,
      `CharacterPreviewPoe2`, `LoginServerSession.Poe2Preview`) but has nothing to show yet. The in-game player's
@@ -414,4 +416,5 @@ In rough order. Each is a wave of its own.
 | 26 | The starting weapon | `13f1f9a` |
 | 27 | NPCs, dialogue, quest flags, waypoints | `910c0b3` (first half), `6cc9bd7`, `354eddb` |
 | 26 (follow-up) | The weapon's own attack usable | `8e206dd` |
-| 28 | The passive skill tree | the commit after `8e206dd` |
+| 28 | The passive skill tree | `a141524` |
+| 29 | Experience and gold saved, gold piles (untested live) | the commit after `a141524` |

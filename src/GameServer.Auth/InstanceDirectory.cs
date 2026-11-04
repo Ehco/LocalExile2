@@ -162,6 +162,7 @@ sealed class InstanceDirectory(InstanceRegistry registry, AccountService? accoun
                         && _towns.FirstOrDefault(t => t.Id == last) is { Id: not null } known ? known.Hash16 : (ushort)0,
                     QuestFlags = [.. character?.QuestFlags ?? []], Waypoints = [.. character?.Waypoints ?? []],
                     Passives = [.. character?.Passives ?? []],
+                    Experience = character?.Experience ?? 0, Gold = character?.Gold ?? 0,
                 };
             }
             case "list":
@@ -217,6 +218,13 @@ sealed class InstanceDirectory(InstanceRegistry registry, AccountService? accoun
                 if (!r.Ok) return new ControlResponse { Ok = false, Error = r.Error.ToString() };
                 Console.WriteLine($"[auth] {info.Character}: passives {(req.Values ?? []).Count}");
                 return new ControlResponse { Ok = true, Character = info.Character };
+            }
+            case "set_progress":
+            {
+                if (accounts is null) return new ControlResponse { Ok = false, Error = "no account store" };
+                var r = accounts.SetProgress(info.Character, req.Experience, req.Gold);
+                if (!r.Ok) return new ControlResponse { Ok = false, Error = r.Error.ToString() };
+                return new ControlResponse { Ok = true, Character = info.Character, Experience = req.Experience, Gold = req.Gold };
             }
             case "set_quest_flags":
             case "set_waypoints":

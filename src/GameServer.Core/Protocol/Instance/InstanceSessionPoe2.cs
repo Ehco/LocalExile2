@@ -67,7 +67,8 @@ public sealed partial class InstanceSessionPoe2
     /// <param name="area">The area the session serves: its entry flags are set and, in a town, its waypoint activated.</param>
     /// <param name="passives">The character's allocated passive nodes (<see cref="Poe2Passives.Encode"/>), from its save;
     /// <paramref name="onPassives"/> gets each new whole list to save; <paramref name="passiveNodes"/> gives their stats
-    /// and the refund's cost, paid from <paramref name="gold"/>, the character's gold (kept for the session).</param>
+    /// and the refund's cost, paid from <paramref name="gold"/>, the character's gold; <paramref name="onProgress"/> gets
+    /// the total experience and the gold whenever either changes (a kill, a gold pile taken, a refund), to save.</param>
     public InstanceSessionPoe2(PlayerObjectPoe2 player, string objectType = DefaultObjectType, uint playerId = DefaultPlayerId,
         double walkSpeed = DirectionWalk.DefaultSpeed, Func<int, int, bool>? walkable = null,
         IReadOnlyList<AreaTransitionObjectPoe2>? exits = null, IReadOnlyList<Poe2Monster>? monsters = null,
@@ -77,8 +78,9 @@ public sealed partial class InstanceSessionPoe2
         IEnumerable<string>? waypoints = null, Poe2Quests? quests = null, Poe2Areas.Area? area = null,
         Action<IReadOnlyCollection<string>>? onQuestFlags = null, Action<IReadOnlyCollection<string>>? onWaypoints = null,
         IEnumerable<int>? passives = null, Action<IReadOnlyCollection<int>>? onPassives = null, ushort questPassivePoints = 0,
-        Poe2Passives? passiveNodes = null, uint gold = 0)
+        Poe2Passives? passiveNodes = null, uint gold = 0, Action<uint, uint>? onProgress = null)
     {
+        _onProgress = onProgress;
         (_player, _objectType, PlayerId, _exits, _monsters) = (player, objectType, playerId, exits ?? [], monsters ?? []);
         InitQuests(serverObjects, questFlags, waypoints, quests, area, onQuestFlags, onWaypoints);
         InitPassives(passives, questPassivePoints, passiveNodes, onPassives, gold);

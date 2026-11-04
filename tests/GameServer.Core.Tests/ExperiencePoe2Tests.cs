@@ -15,7 +15,7 @@ public class ExperiencePoe2Tests
 
     // A level 1 Warrior at (200, 200) with some experience, one zombie (life 1, level 2, 18 experience × 150 %) at
     // (210, 200) that does not fight back.
-    static InstanceSessionPoe2 InWorld(uint experience, List<int>? levels = null)
+    static InstanceSessionPoe2 InWorld(uint experience, List<int>? levels = null, List<(uint Experience, uint Gold)>? progress = null)
     {
         var variety = new Poe2Monsters.Variety("Metadata/Monsters/Zombies/CourtGuardZombieUnarmed", 1736,
             [.. MonsterObjectPoe2.BaseComponents], ExperienceMultiplier: 150);
@@ -25,9 +25,22 @@ public class ExperiencePoe2Tests
         var player = new PlayerObjectPoe2(GridX: 200, GridY: 200, Life: 58, Mana: 46, ClassRow: 6, Experience: experience,
             Skills: WarriorSkills);
         var session = new InstanceSessionPoe2(player, monsters: [zombie], random: new Random(1), levelStarts: LevelStarts,
-            onLevel: levels is null ? null : levels.Add);
+            onLevel: levels is null ? null : levels.Add, gold: 12,
+            onProgress: progress is null ? null : (e, g) => progress.Add((e, g)));
         session.Handle(AreaGenerated, 0);
         return session;
+    }
+
+    [Fact]
+    public void A_kill_reports_the_experience_and_the_gold_to_save()
+    {
+        var progress = new List<(uint Experience, uint Gold)>();
+        var session = InWorld(0, progress: progress);
+
+        session.Handle(PunchZombie, 0);
+        session.Tick(1);
+
+        Assert.Equal([(27u, 12u)], progress);
     }
 
     [Fact]

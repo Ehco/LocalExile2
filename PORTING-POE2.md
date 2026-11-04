@@ -2086,3 +2086,33 @@ Limits:
   points as 0 and the per-node weapon set byte as 0.
 - Jewel sockets, ascendancies, the IsMultipleChoice nodes and PoE2's
   "allocated by a jewel" stats are out.
+
+## Wave 29 — experience and gold saved, gold piles (2026-11-05)
+
+Written without a live test (the client was closed for the night): unit-tested
+only, to be checked in game first thing. Code: `Character.Experience` /
+`Character.Gold` (`Models.cs`), `AccountService.SetProgress`, the control op
+`set_progress` (`InstanceControl.cs`, `InstanceDirectory.cs`),
+`InstanceSessionPoe2.Experience.cs` (`ProgressChanged`),
+`InstanceSessionPoe2.Loot.cs`, `Poe2Items.RollGold`, `Program.Poe2.cs`.
+
+- **Saving.** The character's total experience and gold go to Auth together
+  (`set_progress`, the Gateway's `SavePoe2Progress`) whenever either moves: a
+  kill, a gold pile taken, a passive refund. `resolve` returns both; on entering
+  the player's experience is the saved total (at least the level's start) and
+  its gold the saved amount (`Game_POE2_GOLD` only for a character with none).
+  This closes "the experience into a level is not saved" from wave 24.
+- **Gold piles.** A kill also rolls a gold pile (`Poe2Items.RollGold`: 50 %,
+  3 + 2 × level to 8 + 4 × level coins, our own numbers), a WorldItem of
+  `Metadata/Items/Currency/GoldCoin` (BaseItemTypes row 1943, "Gold", stack
+  up to 10 000) dropped where the monster fell, after the currency roll on the
+  same generator. A click walks to it as to any item; on arrival the pile
+  leaves the ground (`0x2fa`) and its stack goes to the character's gold
+  (`0x2db`), not to the inventory. Nothing drops without the item type in
+  `data/poe2/item-types.json`.
+
+To check live: the gold pile's look on the ground (the client may draw gold
+with its own object type rather than a WorldItem), the pickup (PoE2 picks gold
+up by walking over it: the client may send something other than the item
+click `0x1a5` / `0x2000c266`), the gold label after the pickup, and the
+experience and gold after a relog.

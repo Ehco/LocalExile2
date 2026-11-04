@@ -13,6 +13,59 @@ public class LootPoe2Tests
     static readonly Poe2Items.ItemType Wisdom = new("Metadata/Items/Currency/CurrencyIdentification", 2, "Scroll of Wisdom",
         1351093167, 1, 1, 1, 2083, ["Base", "Usable", "Stack"], 40);
 
+    static readonly Poe2Items.ItemType GoldCoin = new(Poe2Items.GoldCoin, 1943, "Gold", 3718305531, 1, 1, 1, 51072,
+        ["Base", "Usable", "Stack"], 10000);
+
+    // The zombie's kill with gold piles on the table too (wave 29).
+    static InstanceSessionPoe2 InWorldWithGold(int seed, List<(uint Experience, uint Gold)> progress)
+    {
+        var zombie = new Poe2Monster("Metadata/Monsters/Zombies/CourtGuardZombieUnarmed", 1736, 2,
+            new MonsterObjectPoe2(210, 200, 1, MonsterObjectPoe2.BaseComponents));
+        var session = new InstanceSessionPoe2(new PlayerObjectPoe2(GridX: 200, GridY: 200, Life: 58, Skills: WarriorSkills),
+            monsters: [zombie], random: new Random(seed), gold: 5, onProgress: (e, g) => progress.Add((e, g)),
+            itemTypes: new Dictionary<string, Poe2Items.ItemType> { [Wisdom.Id] = Wisdom, [GoldCoin.Id] = GoldCoin });
+        session.Handle(AreaGenerated, 0);
+        return session;
+    }
+
+    [Fact]
+    public void A_gold_pile_is_a_stack_of_coins_by_the_monsters_level()
+    {
+        var types = new Dictionary<string, Poe2Items.ItemType> { [GoldCoin.Id] = GoldCoin };
+        var sizes = Enumerable.Range(0, 200).Select(seed => Poe2Items.RollGold(types, 2, new Random(seed))).Where(g => g is not null)
+            .Select(g => (int)g!.StackSize).ToList();
+
+        Assert.InRange(sizes.Count, 60, 140);
+        Assert.All(sizes, s => Assert.InRange(s, 7, 16));
+        Assert.Null(Poe2Items.RollGold(new Dictionary<string, Poe2Items.ItemType>(), 2, new Random(1)));
+    }
+
+    [Fact]
+    public void A_gold_pile_taken_goes_to_the_characters_gold_not_the_inventory()
+    {
+        var progress = new List<(uint Experience, uint Gold)>();
+        InstanceSessionPoe2? session = null; uint id = 0; WorldItemObjectPoe2? pile = null;
+        for (int seed = 0; seed < 40 && pile is null; seed++)
+        {
+            session = InWorldWithGold(seed, progress);
+            session.Handle(PunchZombie, 0);
+            session.Tick(1);
+            foreach (var (i, g) in session.GroundItems)
+                if (g.Item.TypeHash == GoldCoin.Hash) (id, pile) = (i, g);
+        }
+        Assert.NotNull(pile);
+        progress.Clear();
+
+        session!.Handle(Pick(id), 2);
+        var taken = session.Tick(3);
+
+        Assert.Equal([InstanceProtocolPoe2.RemoveObject(id), InstancePassivesPoe2.Gold(5u + pile!.Item.StackSize)], taken);
+        Assert.Equal(5u + pile.Item.StackSize, session.Gold);
+        Assert.DoesNotContain(id, session.GroundItems.Keys);
+        Assert.Empty(session.MainInventory);
+        Assert.Equal([(session.Experience, session.Gold)], progress);
+    }
+
     // One zombie (life 1, level 2) at (210, 200) that does not fight back; Scroll of Wisdom is the only drop.
     static InstanceSessionPoe2 InWorld(int seed)
     {

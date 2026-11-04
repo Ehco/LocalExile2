@@ -18,7 +18,7 @@ partial class Program
     // What the Gateway enters a PoE2 client with: Auth's area and character for the ticket, with the character's quest
     // flags (QuestFlags Ids) and activated waypoints (WorldAreas Ids).
     sealed record Poe2Ticket(ushort Area, uint Seed, ulong Instance, string Character, CharacterClass Class, int Level,
-        IReadOnlyList<string> QuestFlags, IReadOnlyList<string> Waypoints, IReadOnlyList<int> Passives);
+        IReadOnlyList<string> QuestFlags, IReadOnlyList<string> Waypoints, IReadOnlyList<int> Passives, uint Experience = 0, uint Gold = 0);
 
     // Game_POE2_TRACE=1 logs every decrypted client chunk (its first 48 bytes), to map new C→S messages.
     static readonly bool Poe2Trace = Environment.GetEnvironmentVariable("Game_POE2_TRACE") == "1";
@@ -136,7 +136,7 @@ partial class Program
                 var session = new InstanceSessionPoe2(new PlayerObjectPoe2(spawn.X, spawn.Y,
                     Life: (uint)sheet.MaximumLife, Mana: (uint)sheet.MaximumMana,
                     Stats: [.. sheet.Stats, .. Poe2StartingSkills.MainHandStats(row, weapon)],
-                    Name: ticket.Character, ClassRow: row.Index, Experience: CharacterStats.ExperienceFor(ticket.Level),
+                    Name: ticket.Character, ClassRow: row.Index, Experience: Math.Max(CharacterStats.ExperienceFor(ticket.Level), ticket.Experience),
                     Skills: Poe2StartingSkills.For(row, weapon), Visible: weapon is null ? null : [Poe2Items.Visible(weapon)]),
                     objectType: row.ObjectType, walkable: walkable, exits: exits, monsters: monsters,
                     levelStarts: CharacterStats.LevelStarts, onLevel: level => _ = SavePoe2Level(remote, opening.Ticket, level),
@@ -145,7 +145,9 @@ partial class Program
                     onQuestFlags: flags => _ = SavePoe2List(remote, opening.Ticket, "set_quest_flags", flags),
                     onWaypoints: list => _ = SavePoe2List(remote, opening.Ticket, "set_waypoints", list),
                     passives: ticket.Passives, onPassives: nodes => _ = SavePoe2Passives(remote, opening.Ticket, nodes),
-                    questPassivePoints: Poe2QuestPassivePoints, passiveNodes: Poe2PassiveNodes.Value, gold: Poe2StartingGold);
+                    questPassivePoints: Poe2QuestPassivePoints, passiveNodes: Poe2PassiveNodes.Value,
+                    gold: ticket.Gold == 0 ? Poe2StartingGold : ticket.Gold,
+                    onProgress: (experience, gold) => _ = SavePoe2Progress(remote, opening.Ticket, experience, gold));
                 var clock = Stopwatch.StartNew();
                 double? leavingSince = null;
                 bool transferred = false;
@@ -211,7 +213,8 @@ partial class Program
             return new(resolved.Area, resolved.Seed == 0 ? 1 : resolved.Seed, resolved.Instance,
                 string.IsNullOrEmpty(resolved.Character) ? "Exile" : resolved.Character,
                 Enum.IsDefined((CharacterClass)resolved.Class) ? (CharacterClass)resolved.Class : CharacterClass.Witch,
-                Math.Clamp(resolved.Level, 1, 100), resolved.QuestFlags ?? [], resolved.Waypoints ?? [], resolved.Passives ?? []);
+                Math.Clamp(resolved.Level, 1, 100), resolved.QuestFlags ?? [], resolved.Waypoints ?? [], resolved.Passives ?? [],
+                resolved.Experience, resolved.Gold);
         Console.WriteLine($"[gateway] {remote} ticket 0x{ticket:x8} not resolved ({resolved.Error ?? "unknown area"}); " +
                           "Clearfell Encampment, seed 1, instance 1");
         return new(Poe2FallbackArea, 1, 1, "Exile", CharacterClass.Witch, 1, [], [], []);
@@ -235,8 +238,8 @@ partial class Program
     static readonly ushort Poe2QuestPassivePoints =
         ushort.TryParse(Environment.GetEnvironmentVariable("Game_POE2_PASSIVE_POINTS"), out var points) ? points : (ushort)0;
 
-    // The character's gold at each entry (PoE2's gold drops are not implemented; gold is not saved): env Game_POE2_GOLD.
-    // A passive refund costs GoldRespecPrices' gold at the level.
+    // The gold a character without any starts with (env Game_POE2_GOLD, for tests; PoE2 starts at 0): monsters drop
+    // gold piles and a passive refund costs GoldRespecPrices' gold at the level; the gold is saved with the experience.
     static readonly uint Poe2StartingGold =
         uint.TryParse(Environment.GetEnvironmentVariable("Game_POE2_GOLD"), out var gold) ? gold : 0;
 
@@ -247,8 +250,16 @@ partial class Program
         Console.WriteLine(saved.Ok ? $"[gateway] {remote} {nodes.Count} passives saved" : $"[gateway] {remote} passives not saved: {saved.Error ?? "no answer"}");
     }
 
-    // A kill's new level goes to Auth's account store (and the next tickets): the character comes back at that level's
-    // start. The experience into the level is not saved.
+    // The total experience and the gold go to Auth's account store at each change ("set_progress"; wave 29): the
+    // character comes back with both.
+    static async Task SavePoe2Progress(string remote, uint ticket, uint experience, uint gold)
+    {
+        var saved = await InstanceControl.CallAsync(new ControlRequest { Op = "set_progress", Ticket = ticket, Experience = experience, Gold = gold });
+        if (!saved.Ok) Console.WriteLine($"[gateway] {remote} experience {experience} and gold {gold} not saved: {saved.Error ?? "no answer"}");
+    }
+
+    // A kill's new level goes to Auth's account store (and the next tickets): the character comes back at that level
+    // (its experience into it from "set_progress").
     static async Task SavePoe2Level(string remote, uint ticket, int level)
     {
         var saved = await InstanceControl.CallAsync(new ControlRequest { Op = "set_level", Ticket = ticket, Level = level });
