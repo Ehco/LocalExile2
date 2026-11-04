@@ -1470,3 +1470,88 @@ Limits:
   (blood, sound), no flinch.
 - No experience (wave 24). Monsters do not fight back (wave 23).
 - Monsters do not move, so the approach aims at their placed cell.
+
+## Wave 23 — monsters fight back, the player's death (2026-11-04)
+
+The area's monsters now chase the player, attack it in reach and take its
+life; at 0 the client shows the death screen and "Resurrect at Checkpoint"
+revives the player. Code: `InstanceSessionPoe2.Monsters.cs`.
+
+- **Monster attack data.** `monster_varieties.py` adds MaxAgroRange, the type's
+  DamageSpread and the variety's first GrantedEffects row (its attack) with
+  that effect's GrantedEffectsPerLevel / GrantedEffectStatSetsPerLevel rows by
+  level. `Poe2Monsters.AttackOf` builds the attack: the level's Damage ×
+  DamageMultiplier, ± DamageSpread, the variety's AttackSpeed as the attack
+  time, MaximumAttackDistance as the reach.
+  - A level 2 Rotting Guard: 10.26 × 120 % = 12 (10–15) per hit every 2.5 s.
+  - PoE1's server (and Path of Building) also multiply the damage by the attack
+    time in seconds. For PoE2 that gave 25–37 per hit against a 58-life
+    Warrior, so it is left out until PoE2's rule is known.
+  - The attack is the first entry of the monster's Actor skill list (id
+    `0x102`, the same layout as the player's), so the client knows the skill
+    its actions name.
+- **AI** (`MonsterTick`, every frame; each monster decides every 0.25 s).
+  - Aggro within MaxAgroRange cells (as PoE1 reads it; 105 for the Rotting
+    Guard); a hit from the player provokes a monster from any distance.
+  - Out of reach (MaximumAttackDistance + 2 cells), it walks to the edge of
+    its reach on the line to the player, at MovementSpeed cells/s; the order is
+    renewed once the target point has moved 3 cells.
+  - In reach and free, it swings: S→C `0x1c8` with skill `0x102`, flags
+    `0x0408` and the player as the target. The hit lands at half the attack
+    time if the player is still within reach + 3 cells, and sends `0x1cf` on
+    the player.
+  - The server estimates each monster's cell along its walk;
+    the player's approach now aims at that cell.
+  - The monsters wait 2 s after the player enters (the client is still
+    loading), start a pack 0.25 s apart, and stop while the client has the
+    game paused (C→S `0x1ff`: loading, the Esc menu). On resume their timers
+    move on by the pause.
+- **The chase is a MoveTo.** PoE1's chase (`0x1c8` with the Move action
+  `0x2909`, the client pathing) left PoE2's monsters standing. S→C `0x1e0`
+  (Positioned, read `0x141f6d540`) makes them glide to the point: object
+  header, u32 x, u32 y, u32 height marker (`0x7fffffff`: terrain), u32 float
+  duration, three u8 (0).
+- **The death screen: S→C `0x6d`** (read `0x142154590`). Found from the
+  `death_screen` panel:
+  - the panel's constructor `0x1403af980` is built by the HUD at
+    `0x140fcf1ec` into HUD `+0xa88`; its setup is `0x1403b0f60`;
+  - HUD vtable `+0x5c0` (`0x140fee6d0`) calls the setup from a task
+    (`0x141016e40`) queued by in-game `0x141010240`;
+  - that function is a listener at instance `+0x12f0`, fired by the instance
+    dispatcher's case `0x12` (`0x142123e6f`), which is id `0x6d`.
+
+  Format: u8 (`+0x10`), u8 flags (bit 0 → `+0x1a`, bit 1 → `+0x1b`, bit 2 →
+  `+0x18`, bit 3 → `+0x19` = hide, bit 4 → `+0x1c`). The panel takes (bit 2,
+  bit 0, bit 1). With flags 0 it shows "You have Died" and "Resurrect at
+  Checkpoint".
+- **Resurrect: C→S `0x6c`** (4 bytes; live `00 6c 00 00` from "Resurrect at
+  Checkpoint", followed by an unframed `0x178`, 8 bytes). As PoE1's server, the
+  session answers:
+  - the death screen hidden (`0x6d` with bit 3);
+  - full life (`0x1cf` from 0 runs the client's revive);
+  - a teleport to where the player entered: S→C `0x1dd` (Positioned, read
+    `0x141f6d1c0`): object header, u32 x, u32 y, u32 height marker, u32
+    float z;
+  - every monster calms down (no aggro, 2 s wait), and the living ones heal
+    to full.
+- A dead player's moves and skill uses get no answer.
+- **An attack at the ground is echoed** (`0x1c8` toward the player's cell plus
+  the use's relative x, y). Unanswered, the client sent no further skill use.
+  The dodge roll still gets no answer; the client runs it alone.
+
+**Live test (2026-11-04).** Spawned by Clearfell's fire (`SPAWN=1154,1297`),
+next to three Rotting Guards:
+- they glided to the player and their swings took its life (58 → 0 in about
+  6 s for the three);
+- "You have Died" showed with "Resurrect at Checkpoint", and the click
+  revived the player at full life;
+- seven punches in a row while being hit killed one guard.
+
+Limits:
+- No experience (wave 24), no loot (items).
+- The chase glides straight through walls: MoveTo has no pathing. Whether the
+  client animates the walk is not checked.
+- Damage, aggro range and speed units are PoE1's reading of the columns, not
+  checked against PoE2.
+- No action hit `0x1fb`, no stun, no flinch, no player regeneration.
+- The "in town" button and hardcore death are not handled.

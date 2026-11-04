@@ -13,8 +13,9 @@ enters Clearfell Encampment, served by our Gateway. Characters are created on th
 on its character screen; the player enters as the saved character (name, class model, level). The player has a HUD
 and inventories, the area is drawn, and the player walks. The server's estimate of where the player is stops at
 walls. Walking into the camp's gate takes the player to Clearfell, and its exit back returns to the camp. Clearfell's
-monsters stand where the level places them. The player has Punch and the dodge roll on its skill bar; Punch on a
-monster walks the player to it and punches; the monster loses life and dies, but does not fight back yet.
+monsters chase the player and hit it. The player has Punch and the dodge roll on its skill bar; Punch on a monster
+walks the player to it and punches; the monster loses life and dies. At 0 life the player dies, gets the death screen
+and can resurrect at the area's arrival point.
 
 | Part | State | Where |
 |---|---|---|
@@ -31,8 +32,9 @@ monster walks the player to it and punches; the monster loses life and dies, but
 | Monsters | Placed from the captures at the area's level: types (`0x21`), blob, wake zone. No AI, attacks or hits; life is a placeholder | `MonsterObjectPoe2.cs`, `Poe2Monsters.cs`, `scripts/re/poe2/monster_varieties.py`; wave 20 |
 | Skills, skill bar, attacks | Punch and the dodge roll in the Actor; the picker's list `0x66`, slot binding `0x5c`, skill use `0x1a5` echoed with `0x1c8` for targeted uses. No damage; slots kept per session only | `SkillsPoe2.cs`, `Poe2StartingSkills.cs`, `InstanceSkillsPoe2.cs`, `scripts/re/poe2/dat.py`; wave 21 |
 | Hits, monster death | Punch hits land after the approach (`0x1cf` life, `0x1d3` stats); monster life from DefaultMonsterStats × LifeMultiplier; death at 0. No loot, no action hit `0x1fb` | `InstanceCombatPoe2.cs`, `InstanceSessionPoe2.cs`, `Poe2Monsters.cs`; wave 22 |
+| Monster AI, player death | Aggro, chase (MoveTo `0x1e0`, no pathing), swings (`0x1c8`) and hits on the player; the death screen `0x6d`, resurrect C→S `0x6c` (teleport `0x1dd`) | `InstanceSessionPoe2.Monsters.cs`, `Poe2Monsters.AttackOf`; wave 23 |
 
-**Tests.** 617/617 pass:
+**Tests.** 625/625 pass:
 
 ```bash
 dotnet test tests/GameServer.Core.Tests -c Release
@@ -263,8 +265,8 @@ In rough order. Each is a wave of its own.
    - add its exit rules to `Poe2Areas` (room fragments → destinations, from its `.tgr` entranceK labels).
 
    Also open: the exit click, the town gates not drawn, C→S `0x362`.
-6. **Combat** (waves 21–22 did the skills, the attack, hits and monster death): loot (with items),
-   monster AI, the player's death, experience. Then items, gems, passives, NPCs, waypoints and quests. PoE1's
+6. **Combat** (waves 21–23 did the skills, the attack, hits, monster death, monster AI and the player's death):
+   experience, loot (with items); monster pathing (the chase glides through walls), PoE2's monster damage rule. Then items, gems, passives, NPCs, waypoints and quests. PoE1's
    Gateway is the template; re-verify every id against PoE2.
 
 ## Wave index
@@ -293,4 +295,5 @@ In rough order. Each is a wave of its own.
 | 19 | Exits, change of area, Clearfell | `25fee82` |
 | 20 | Monsters, the wake zone, pause | `2dd71ca` |
 | 21 | Skills, the skill bar, a targeted attack | `c28161f` |
-| 22 | Hits and monster death | the commit after `c28161f` |
+| 22 | Hits and monster death | `b4171db` |
+| 23 | Monster AI, the player's death | the commit after `b4171db` |

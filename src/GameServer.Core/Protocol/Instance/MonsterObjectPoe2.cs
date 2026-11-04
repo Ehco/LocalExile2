@@ -11,8 +11,10 @@ namespace GameServer.Core.Protocol.Instance;
 /// <param name="TransitionState">Transitionable's state, 1..num_states (PoE1: state 0 crashes the client).</param>
 /// <param name="SharedStates">The StateMachine's shared states in .ot order (define_shared_state and
 /// define_shared_checkpoint_state); the client throws unless the count matches the type.</param>
+/// <param name="Skills">The Actor's skills (its attack, wave 23), as the player's.</param>
 public sealed record MonsterObjectPoe2(int GridX, int GridY, uint Life, IReadOnlyList<string> Components, float Rotation = 0,
-    string? Model = null, ushort Team = 1, byte TransitionState = 1, IReadOnlyList<string>? SharedStates = null)
+    string? Model = null, ushort Team = 1, byte TransitionState = 1, IReadOnlyList<string>? SharedStates = null,
+    IReadOnlyList<GrantedSkillPoe2>? Skills = null)
 {
     public static readonly string[] BaseComponents =
         ["Positioned", "Stats", "ObjectMagicProperties", "BaseEvents", "Pathfinding", "Buffs", "Life", "Animated",
@@ -51,7 +53,8 @@ public sealed record MonsterObjectPoe2(int GridX, int GridY, uint Life, IReadOnl
                     break;
                 case "Animated": if (Model is null) w.U8(0); else w.U8(1).WStr32(Model); break;
                 case "Inventories": w.U8(0).U8(0); break;
-                case "Actor": w.Zeros(40); break;
+                // As the player's: three empty entries, the flags byte, the skill list, 14 bytes (40 with no skills).
+                case "Actor": w.Zeros(18).U8(0); ActorSkillsPoe2.WriteList(w, Skills ?? []); w.Zeros(14); break;
                 case "Transitionable": w.U8((byte)(TransitionState & 0x7f)); break;
                 // 0x141dfa4a0 (as PoE1): u8 shared-state count, u8 shared-timer count, then per shared state a compact
                 // value and a u8 (0x02 keeps the sent value), per timer a u32 and a u8. Every state starts at 0.
@@ -72,7 +75,8 @@ public sealed record MonsterObjectPoe2(int GridX, int GridY, uint Life, IReadOnl
 /// <summary>A monster to create in an area: its MonsterVarieties Id and row, its level and its object, and the variety's
 /// and level's combat values when the server has them.</summary>
 public sealed record Poe2Monster(string VarietyId, ushort Row, byte Level, MonsterObjectPoe2 Object,
-    World.Poe2Monsters.Variety? Variety = null, World.Poe2Monsters.LevelStats? LevelStats = null)
+    World.Poe2Monsters.Variety? Variety = null, World.Poe2Monsters.LevelStats? LevelStats = null,
+    World.Poe2Monsters.Attack? Attack = null)
 {
     public string TypePath => MonsterObjectPoe2.TypePath(VarietyId, Level);
 }

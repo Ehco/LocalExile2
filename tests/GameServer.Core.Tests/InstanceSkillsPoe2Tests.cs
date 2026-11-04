@@ -85,6 +85,17 @@ public class InstanceSkillsPoe2Tests
     }
 
     [Fact]
+    public void A_punch_at_the_ground_is_echoed_toward_its_cell()
+    {
+        var session = InWorld();
+
+        // As live: Punch at (+9, -38) from the player, no target.
+        var sent = session.Handle(Convert.FromHexString("01A500000001020400FF0000000009FFFFFFDA"), 1);
+
+        Assert.Equal(InstanceSkillsPoe2.ActionStarted(0x1000, 200, 200, 209, 162, 0x102, 0x0400), sent.Single());
+    }
+
+    [Fact]
     public void Split_frames_both_lengths_of_skill_use()
     {
         var messages = InstanceSessionPoe2.Split([.. DodgeUse, .. PunchUse, .. PunchUse[..10]], out int rest);

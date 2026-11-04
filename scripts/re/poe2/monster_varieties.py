@@ -10,7 +10,11 @@ client deserializes for them (PORTING-POE2.md, wave 20).
   keeping its first place; client blocks are not deserialized), checked live on CourtGuardZombie (14 components).
 - The StateMachine's shared states: define_shared_state and PoE2's define_shared_checkpoint_state, in .ot order.
 - The variety's combat columns (dat.py): Name, LifeMultiplier, DamageMultiplier, ExperienceMultiplier (percent),
-  AttackSpeed (ms), Minimum/MaximumAttackDistance, MovementSpeed, ObjectSize (wave 22).
+  AttackSpeed (ms), Minimum/MaximumAttackDistance, MovementSpeed, ObjectSize (wave 22), MaxAgroRange and its
+  MonsterTypes DamageSpread (wave 23).
+- Its attack (wave 23): the first GrantedEffects entry, with its GrantedEffectsPerLevel and
+  GrantedEffectStatSetsPerLevel rows by level ([level, GEPL row, GESSPL row]; the monster takes the highest level
+  not above its own).
 
 It also writes data/poe2/default-monster-stats.json: DefaultMonsterStats by level (row = level - 1), the base life,
 damage, experience, accuracy, evasion and armour the variety's multipliers scale.
@@ -35,7 +39,7 @@ CACHE = os.path.join(REPO, "Tools", "re", "out", "poe2")
 OUT = os.path.join(REPO, "data", "poe2", "monster-varieties.json")
 LEVELS_OUT = os.path.join(REPO, "data", "poe2", "default-monster-stats.json")
 COMBAT = ["Name", "LifeMultiplier", "DamageMultiplier", "ExperienceMultiplier", "AttackSpeed", "MinimumAttackDistance",
-          "MaximumAttackDistance", "MovementSpeed", "ObjectSize"]
+          "MaximumAttackDistance", "MovementSpeed", "ObjectSize", "MaxAgroRange"]
 LEVEL_FIELDS = {"MonsterLife": "life", "Damage": "damage", "Experience": "experience", "Accuracy": "accuracy",
                 "Evasion": "evasion", "Armour": "armour"}
 VARIETIES = "Data/Balance/MonsterVarieties.datc64"
@@ -100,6 +104,23 @@ def main():
     wanted = [t for t in placed if t in table]
     files = load([table[t][1] for t in wanted])
     columns = dat.table("MonsterVarieties")
+    types = dat.table("MonsterTypes")
+    effects, per_level, stat_sets = dat.table("GrantedEffects"), {}, {}
+    for i, r in enumerate(dat.table("GrantedEffectsPerLevel")):
+        per_level.setdefault(r["GrantedEffect"], []).append((r["Level"], i))
+    for i, r in enumerate(dat.table("GrantedEffectStatSetsPerLevel")):
+        stat_sets.setdefault(r["StatSet"], {})[r["GemLevel"]] = i
+
+    def attack(row):
+        granted = columns[row]["GrantedEffects"]
+        if not granted:
+            return {}
+        effect = granted[0]
+        sets = stat_sets.get(effects[effect]["StatSet"], {})
+        levels = [[level, gepl, sets.get(level, sets.get(min(sets), -1) if sets else -1)]
+                  for level, gepl in sorted(per_level.get(effect, []))]
+        return {"attackEffect": effect, "attackLevels": levels}
+
     rows = []
     for t in wanted:
         row, base = table[t]
@@ -112,7 +133,8 @@ def main():
             continue
         rows.append({"id": t, "row": row, "components": m["components"][:m["read"]],
                      "sharedStates": [name for name, _ in m["shared_states"]],
-                     **{k[0].lower() + k[1:]: columns[row][k] for k in COMBAT}})
+                     **{k[0].lower() + k[1:]: columns[row][k] for k in COMBAT},
+                     "damageSpread": types[columns[row]["MonsterType"]]["DamageSpread"], **attack(row)})
         print(f"{t} (row {row}, {base}): {len(rows[-1]['components'])} components", file=sys.stderr)
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(OUT, "w", encoding="utf-8") as f:

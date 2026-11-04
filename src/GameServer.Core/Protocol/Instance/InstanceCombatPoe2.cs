@@ -68,4 +68,22 @@ public static class InstanceCombatPoe2
         }
         return w.ToArray();
     }
+
+    public const ushort DeathScreenId = 0x6d, ResurrectId = 0x6c;
+
+    /// <summary>C→S 0x6c (4 bytes): the death screen's button, PoE1's 0x54 with a u8 more. Live 2026-11-04 "Resurrect at
+    /// Checkpoint" sent 00 00 (the client hides the panel itself).</summary>
+    public static bool IsResurrect(ReadOnlySpan<byte> m) =>
+        m.Length >= 4 && m[0] == ResurrectId >> 8 && m[1] == (ResurrectId & 0xff);
+
+    /// <summary>
+    /// S→C 0x6d (instance group, read 0x142154590; the dispatcher's case 0x12 at 0x142123e6f fires the listeners at
+    /// instance +0x12f0 → in-game 0x141010240 → a task → HUD vtable +0x5c0 0x140fee6d0 → the "death_screen" panel at
+    /// HUD +0xa88, setup 0x1403b0f60): PoE1's death screen 0x55 with a u8 first and no trailing fields. u8 (+0x10), u8
+    /// flags: bit0 → +0x1a, bit1 → +0x1b, bit2 → +0x18, bit3 → +0x19 (hides the panel), bit4 → +0x1c. The panel takes
+    /// (bit2, bit0, bit1).
+    /// </summary>
+    public const byte HideDeathScreen = 0x08;
+
+    public static byte[] DeathScreen(byte flags = 0) => new LoginWriter().U16(DeathScreenId).U8(0).U8(flags).ToArray();
 }

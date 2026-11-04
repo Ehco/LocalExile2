@@ -59,6 +59,22 @@ public static class InstanceMovementPoe2
         return w.U8(flag ? (byte)1 : (byte)0).ToArray();
     }
 
+    public const ushort TeleportId = 0x1dd, MoveToId = 0x1e0;
+
+    /// <summary>S→C 0x1e0 (world group, read 0x141f6d540, Positioned): the object glides to x, y (cells) in
+    /// <paramref name="seconds"/>. Object header, u32 x, u32 y, u32 height marker (0x7fffffff: on the terrain), u32 float
+    /// duration, u8 ×3 (+0x30..+0x32, 0 here); all big-endian.</summary>
+    public static byte[] MoveTo(uint objectId, int x, int y, float seconds) =>
+        new LoginWriter().U16(MoveToId).U32(objectId).U32(0).U8(0).U16(0)
+            .U32((uint)x).U32((uint)y).U32(0x7fffffff).U32(BitConverter.SingleToUInt32Bits(seconds)).U8(0).U8(0).U8(0).ToArray();
+
+    /// <summary>S→C 0x1dd (world group, read 0x141f6d1c0; the world handler routes 0x1dd–0x1ea to Positioned's
+    /// 0x141dda7c0): PoE1's teleport 0x1bf behind the PoE2 object header. u32 x, u32 y (cells), u32 height marker
+    /// (0x7fffffff: on the terrain, the z ignored), u32 float z; all big-endian.</summary>
+    public static byte[] Teleport(uint objectId, int x, int y) =>
+        new LoginWriter().U16(TeleportId).U32(objectId).U32(0).U8(0).U16(0)
+            .U32((uint)x).U32((uint)y).U32(0x7fffffff).U32(0).ToArray();
+
     /// <summary>Reads <see cref="InstanceProtocol.CompactInt"/>'s encoding (client reader 0x141cfc160): the prefix bits
     /// give the length, the value bits are sign-extended.</summary>
     public static bool TryReadCompactInt(ReadOnlySpan<byte> m, ref int at, out int value)

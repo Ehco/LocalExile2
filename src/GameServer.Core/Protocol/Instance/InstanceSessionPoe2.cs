@@ -8,7 +8,7 @@ namespace GameServer.Core.Protocol.Instance;
 /// client's decrypted messages into the server's answers. The Gateway does the I/O and ends a server frame
 /// (<see cref="InstanceProtocolPoe2.FrameEnd"/>) every <see cref="FrameMs"/> once <see cref="InWorld"/> is set.
 /// </summary>
-public sealed class InstanceSessionPoe2
+public sealed partial class InstanceSessionPoe2
 {
     public const uint DefaultPlayerId = 0x1000;
     public const string DefaultObjectType = "Metadata/Characters/Int/IntFour";
@@ -29,7 +29,7 @@ public sealed class InstanceSessionPoe2
     // the split, as the stream has no length prefix.
     static readonly Dictionary<ushort, int> FixedLengths = new()
     {
-        [0x1c] = 7, [0x5c] = 8, [0x62] = 4, [InstanceProtocolPoe2.AreaGeneratedId] = 11, [0xbc] = 5, [0x13d] = 3,
+        [0x1c] = 7, [0x5c] = 8, [0x62] = 4, [InstanceCombatPoe2.ResurrectId] = 4, [InstanceProtocolPoe2.AreaGeneratedId] = 11, [0xbc] = 5, [0x13d] = 3,
         [0x173] = 3, [0x17a] = 3, [0x1ac] = 3,
         [0x221] = 3, [0x23d] = 4, [InstanceProtocolPoe2.PauseRequestId] = 4, [0x2e6] = 4, [0x357] = 3,
         [InstanceProtocolPoe2.LeavingId] = 3,
@@ -58,6 +58,7 @@ public sealed class InstanceSessionPoe2
         _walkSpeed = walkSpeed;
         _monsterLife = [.. _monsters.Select(m => (int)m.Object.Life)];
         _random = random ?? Random.Shared;
+        InitMonsters();
     }
 
     private readonly double _walkSpeed;
@@ -96,11 +97,20 @@ public sealed class InstanceSessionPoe2
         if (!InWorld && InstanceProtocolPoe2.ReadAreaGenerated(message) is not null)
         {
             InWorld = true;
+            ArriveMonsters(now);
             return EnterWorld();
         }
         // Outside towns the client asks to pause while it loads the area, then to resume: answer with the state, as
         // PoE1's server answers 0x1d4 with 0x1d3.
-        if (InstanceProtocolPoe2.ReadPauseRequest(message) is { } pause) return [InstanceProtocolPoe2.PauseState(pause)];
+        if (InstanceProtocolPoe2.ReadPauseRequest(message) is { } pause)
+        {
+            PauseMonsters(pause, now);
+            return [InstanceProtocolPoe2.PauseState(pause)];
+        }
+        if (InWorld && _playerLife <= 0 && InstanceCombatPoe2.IsResurrect(message)) return Resurrect(now);
+        // A dead player neither walks nor attacks (until resurrected).
+        if (InWorld && _playerLife <= 0 && (InstanceMovementPoe2.ReadDirectionMove(message, out _) is not null ||
+            InstanceSkillsPoe2.ReadUseSkill(message, out _) is not null)) return [];
         if (InWorld && InstanceMovementPoe2.ReadDirectionMove(message, out _) is { } move)
         {
             // A move ends the attack in progress (the client drops its action). Outside lockstep the client reports its
@@ -120,6 +130,15 @@ public sealed class InstanceSessionPoe2
             var (x, y) = Walk.Cell(now);
             if (MonsterIndex(target) is int monster && AttackPoe2.Of(skill) is { } attack) BeginAttack(monster, attack, now);
             return [InstanceSkillsPoe2.ActionStarted(PlayerId, x, y, use.X, use.Y, use.SkillId, use.Flags, target)];
+        }
+        // An attack at the ground (x, y relative to the player) waits for the server too: unanswered, the client sent no
+        // further use (live 2026-11-04). The dodge roll runs by itself and gets no answer.
+        if (InWorld && InstanceSkillsPoe2.ReadUseSkill(message, out _) is { TargetId: null } ground &&
+            _player.Skills?.FirstOrDefault(s => s.Id == ground.SkillId) is { } groundSkill && AttackPoe2.Of(groundSkill) is not null)
+        {
+            CancelAttack(now);
+            var (x, y) = Walk.Cell(now);
+            return [InstanceSkillsPoe2.ActionStarted(PlayerId, x, y, x + ground.X, y + ground.Y, ground.SkillId, ground.Flags)];
         }
         return [];
     }
@@ -148,9 +167,10 @@ public sealed class InstanceSessionPoe2
     // previous one has ended.
     private void BeginAttack(int monster, AttackPoe2 attack, double now)
     {
+        Provoke(monster);
         var from = Walk.Cell(now);
-        var m = _monsters[monster].Object;
-        double dx = m.GridX - from.X, dy = m.GridY - from.Y, distance = Math.Sqrt(dx * dx + dy * dy);
+        var m = MonsterCell(monster, now);
+        double dx = m.X - from.X, dy = m.Y - from.Y, distance = Math.Sqrt(dx * dx + dy * dy);
         double walk = Math.Max(0, distance - attack.Range);
         var stop = walk <= 0 ? from : ((int)Math.Round(from.X + dx * walk / distance), (int)Math.Round(from.Y + dy * walk / distance));
         double arrive = now + walk / _walkSpeed, swing = Math.Max(arrive, _attackFreeAt), seconds = attack.AttackMs / 1000.0;
@@ -204,14 +224,16 @@ public sealed class InstanceSessionPoe2
 
     private IEnumerable<uint> SkillIds => (_player.Skills ?? []).Select(s => s.Id);
 
-    /// <summary>The server's per-frame work at <paramref name="now"/>: the hit of an attack when it lands (0x1cf), and the
-    /// change area (0x2f1) when the walk reaches an exit. Empty otherwise, and after the player has left.</summary>
+    /// <summary>The server's per-frame work at <paramref name="now"/>: the hit of an attack when it lands (0x1cf), the
+    /// monsters' chases, attacks and hits (0x1c8, 0x1cf on the player), and the change area (0x2f1) when the walk reaches
+    /// an exit. Empty otherwise, and after the player has left.</summary>
     public IReadOnlyList<byte[]> Tick(double now)
     {
         lock (_lock)
         {
             if (!InWorld || LeavingBy is not null) return [];
             var sent = AttackTick(now).ToList();
+            sent.AddRange(MonsterTick(now));
             if (ExitTick(now) is { } change) sent.Add(change);
             return sent;
         }
