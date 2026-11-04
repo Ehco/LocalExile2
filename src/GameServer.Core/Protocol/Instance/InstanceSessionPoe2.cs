@@ -1,3 +1,4 @@
+using GameServer.Core.Accounts;
 using System.Buffers.Binary;
 using GameServer.Core.World;
 
@@ -36,6 +37,7 @@ public sealed partial class InstanceSessionPoe2
         [InstancePassivesPoe2.ChooseAltId] = InstancePassivesPoe2.ChooseLength, [InstancePassivesPoe2.ConfirmId] = InstancePassivesPoe2.ConfirmLength,
         [InstancePassivesPoe2.ConfirmAltId] = InstancePassivesPoe2.ConfirmLength, [0x16] = 7, [0x137] = 4,
         [InstanceGemsPoe2.CutGemId] = InstanceGemsPoe2.CutGemLength, [InstanceGemsPoe2.CutGemIntoSlotId] = InstanceGemsPoe2.CutGemIntoSlotLength,
+        [InstanceItemsPoe2.PickUpId] = InstanceItemsPoe2.PickUpLength, [InstanceItemsPoe2.PlaceId] = InstanceItemsPoe2.PlaceLength,
         [0x173] = 3, [0x17a] = 3, [0x1ac] = 3,
         [0x221] = 3, [0x23d] = 4, [InstanceProtocolPoe2.PauseRequestId] = 4, [0x2e6] = 4, [0x357] = 3,
         [InstanceProtocolPoe2.LeavingId] = 3,
@@ -74,6 +76,8 @@ public sealed partial class InstanceSessionPoe2
     /// <paramref name="onGems"/> gets each new whole list to save; <paramref name="gemTable"/> gives their skills;
     /// <paramref name="startingGem"/> sockets the class's starting gem for a character with no gem (as PoE2 does);
     /// <paramref name="startingUncutGem"/> puts an Uncut Skill Gem (Level 1) in its inventory instead (for tests).</param>
+    /// <param name="items">The character's saved inventory (<see cref="SavedItem"/>); <paramref name="onItems"/> gets the
+    /// whole inventory to save after each change (a pickup, a move, a gem cut).</param>
     public InstanceSessionPoe2(PlayerObjectPoe2 player, string objectType = DefaultObjectType, uint playerId = DefaultPlayerId,
         double walkSpeed = DirectionWalk.DefaultSpeed, Func<int, int, bool>? walkable = null,
         IReadOnlyList<AreaTransitionObjectPoe2>? exits = null, IReadOnlyList<Poe2Monster>? monsters = null,
@@ -85,7 +89,7 @@ public sealed partial class InstanceSessionPoe2
         IEnumerable<int>? passives = null, Action<IReadOnlyCollection<int>>? onPassives = null, ushort questPassivePoints = 0,
         Poe2Passives? passiveNodes = null, uint gold = 0, Action<uint, uint>? onProgress = null,
         IEnumerable<int>? gems = null, Action<IReadOnlyCollection<int>>? onGems = null, Poe2Gems? gemTable = null, bool startingGem = false,
-        bool startingUncutGem = false)
+        bool startingUncutGem = false, IEnumerable<SavedItem>? items = null, Action<IReadOnlyList<SavedItem>>? onItems = null)
     {
         _onProgress = onProgress;
         (_player, _objectType, PlayerId, _exits, _monsters) = (player, objectType, playerId, exits ?? [], monsters ?? []);
@@ -97,6 +101,7 @@ public sealed partial class InstanceSessionPoe2
         _random = random ?? Random.Shared;
         InitExperience(levelStarts, onLevel);
         InitLoot(itemTypes, weapon);
+        InitItems(items, onItems);
         InitGems(gems, gemTable, onGems, startingGem, startingUncutGem);
         InitMonsters();
     }
@@ -171,6 +176,8 @@ public sealed partial class InstanceSessionPoe2
         if (InWorld && InstancePassivesPoe2.ReadRefund(message) is { } refund) return RefundPassive(refund.Node);
         if (InWorld && InstancePassivesPoe2.IsRefundAll(message)) return RefundAllPassives();
         if (InWorld && InstanceGemsPoe2.ReadCutGem(message) is { } cut) return CutGem(cut);
+        if (InWorld && InstanceItemsPoe2.ReadPickUp(message) is { } pickUp) return PickUpItem(pickUp);
+        if (InWorld && InstanceItemsPoe2.ReadPlace(message) is { } place) return PlaceItem(place);
         if (InWorld && InstanceSkillsPoe2.ReadUseSkill(message, out _) is { TargetId: { } item } pick && _groundItems.ContainsKey(item))
             return BeginPickup(item, pick, now);
         if (InWorld && InstanceSkillsPoe2.ReadUseSkill(message, out _) is { TargetId: { } npc } talk && IsUsable(npc))
@@ -321,6 +328,7 @@ public sealed partial class InstanceSessionPoe2
         [.. InstanceInventoriesPoe2.PlayerDefaults.SelectMany(slot =>
             InstanceInventoriesPoe2.AddInventory(InstanceInventoriesPoe2.InventoryId(slot.Row), slot))],
         .. EquipmentMessages(),
+        .. ItemMessages(),
         .. GemMessages(),
         InstanceProtocolPoe2.EnterArea(PlayerId),
         InstanceProtocolPoe2.FrameLength(FrameMs),

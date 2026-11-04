@@ -163,7 +163,7 @@ sealed class InstanceDirectory(InstanceRegistry registry, AccountService? accoun
                     QuestFlags = [.. character?.QuestFlags ?? []], Waypoints = [.. character?.Waypoints ?? []],
                     Passives = [.. character?.Passives ?? []],
                     Experience = character?.Experience ?? 0, Gold = character?.Gold ?? 0,
-                    Gems = [.. character?.Gems ?? []],
+                    Gems = [.. character?.Gems ?? []], Items = [.. character?.Items ?? []],
                 };
             }
             case "list":
@@ -218,6 +218,13 @@ sealed class InstanceDirectory(InstanceRegistry registry, AccountService? accoun
                 var r = accounts.SetPassives(info.Character, req.Values ?? []);
                 if (!r.Ok) return new ControlResponse { Ok = false, Error = r.Error.ToString() };
                 Console.WriteLine($"[auth] {info.Character}: passives {(req.Values ?? []).Count}");
+                return new ControlResponse { Ok = true, Character = info.Character };
+            }
+            case "set_items":
+            {
+                if (accounts is null) return new ControlResponse { Ok = false, Error = "no account store" };
+                var r = accounts.SetItems(info.Character, req.Items ?? []);
+                if (!r.Ok) return new ControlResponse { Ok = false, Error = r.Error.ToString() };
                 return new ControlResponse { Ok = true, Character = info.Character };
             }
             case "set_gems":

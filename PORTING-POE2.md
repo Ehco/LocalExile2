@@ -2184,3 +2184,45 @@ To check live: the gem window opens on the uncut gem and lists gems; what
 the client accepts the skill gem item in inventory 63 and the Actor update
 (the picker should offer Rolling Slam); the uncut gem item in the inventory;
 the uncut drops on the ground.
+
+## Wave 31 — inventory moves and the saved inventory (2026-11-05)
+
+Written without a live test. Code: `InstanceItemsPoe2.cs`,
+`InstanceSessionPoe2.Items.cs`, `Poe2Inventory` (`Find`, `Remove`, `Restore`,
+`Place`), `SavedItem` (`Models.cs`), the Auth op `set_items`.
+
+- **The messages** come from the C→S catalogue (`cs_sigs.py`), by the shape of
+  PoE1's `0x28` / `0x2a` plus the route byte:
+  - **C→S `0x39`, pick up** (19 − 1 = 18 bytes; built by `0x142113b90` from the
+    inventory panel's click record `{u32 inventory, u32 item, u32, u16}`,
+    writer `0x141f36d30`): u8 route, u32 BE inventory id (the panel's
+    `+0x6f0`), u32 BE item id, u32 BE, u8 `0xff`, u8, u8;
+  - **C→S `0x38`, place** (19 bytes; `0x142113c90(session, inventory, x, y,
+    u16)`, writer `0x141f36fc0`, from `0x14047d990` with the panel's
+    `+0x6f0`): u8 route, u32 BE inventory id, u32 BE x, u32 BE y, u8 (1 with
+    Shift: one of the held stack, as PoE1's `+0x1d`), u8 `0xff`, u8, u8.
+  The byte order inside each is the builders' store order, not seen on the
+  wire; the ids are confirmed by their callers (the inventory panel
+  `0x14047d5f0` / `0x14047d990`, the gem panel `0x140aa14a3` "SkillGem",
+  `0x140a87400`).
+- **The server** keeps the cursor as PoE2's `Cursor1` inventory (row 12, id
+  13): a pick-up removes the item from its inventory (`0xde`) and adds it to
+  the cursor (`0xde`); a placement puts the held item at the cell (free cell;
+  a stack of its type grows, the rest stays held; another item is swapped
+  onto the cursor; two items under it or a cell off the grid refuse), with
+  Shift one of the stack. Only the main inventory (id 1) and the cursor are
+  moved: the equipment, the flasks and the skill slots refuse for now (an
+  equipment move would need the model's Inventories component and the
+  weapon records again).
+- **Saving.** The main inventory and the cursor go to Auth after each change
+  (`set_items`, `SavedItem`: inventory, cell, type HASH32, stack) and come
+  back on entering (`0xde` after the starting weapon; what was held returns
+  to the inventory where it fits; unknown types are dropped). Mods are not
+  kept (nothing dropped has any yet). This closes "the inventory is not
+  saved" from wave 25.
+
+To check live: the two ids and their field order (the Gateway's trace shows
+the chunks; a wrong order shows as a refused move), a swap, a stack merge,
+Shift-click, and the inventory after a relog. The gem panel's `0x39`
+(`0x140aa14a3`) on a socketed gem is not answered: the skill list cannot
+remove a skill.

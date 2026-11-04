@@ -1,3 +1,4 @@
+using GameServer.Core.Accounts;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
@@ -53,7 +54,8 @@ public static class InstanceControl
 /// "set_waypoints" (Ticket, Flags) → its whole list of activated waypoints (WorldAreas Ids);
 /// "set_passives" (Ticket, Values) → its whole list of allocated passive nodes;
 /// "set_progress" (Ticket, Experience, Gold) → its total experience and gold;
-/// "set_gems" (Ticket, Values) → its whole list of socketed skill gems. "resolve" returns all of them.
+/// "set_gems" (Ticket, Values) → its whole list of socketed skill gems;
+/// "set_items" (Ticket, Items) → its whole inventory. "resolve" returns all of them.
 /// </summary>
 public sealed record ControlRequest
 {
@@ -72,6 +74,8 @@ public sealed record ControlRequest
     /// <summary>"set_progress": the character's total experience and gold.</summary>
     public uint Experience { get; init; }
     public uint Gold { get; init; }
+    /// <summary>"set_items": the whole inventory.</summary>
+    public List<SavedItem>? Items { get; init; }
 }
 
 public sealed record ControlResponse
@@ -111,8 +115,9 @@ public sealed record ControlResponse
     /// <summary>"resolve": a PoE2 character's total experience and gold (wave 29).</summary>
     public uint Experience { get; init; }
     public uint Gold { get; init; }
-    /// <summary>"resolve": a PoE2 character's socketed skill gems (wave 30).</summary>
+    /// <summary>"resolve": a PoE2 character's socketed skill gems (wave 30) and saved inventory (wave 31).</summary>
     public List<int>? Gems { get; init; }
+    public List<SavedItem>? Items { get; init; }
 }
 
 public sealed record ControlInstance(ulong Id, long CreatedUnix, int SecondsLeft, List<string> Players);

@@ -19,7 +19,7 @@ partial class Program
     // flags (QuestFlags Ids) and activated waypoints (WorldAreas Ids).
     sealed record Poe2Ticket(ushort Area, uint Seed, ulong Instance, string Character, CharacterClass Class, int Level,
         IReadOnlyList<string> QuestFlags, IReadOnlyList<string> Waypoints, IReadOnlyList<int> Passives, uint Experience = 0, uint Gold = 0,
-        IReadOnlyList<int>? Gems = null);
+        IReadOnlyList<int>? Gems = null, IReadOnlyList<SavedItem>? Items = null);
 
     // Game_POE2_TRACE=1 logs every decrypted client chunk (its first 48 bytes), to map new C→S messages.
     static readonly bool Poe2Trace = Environment.GetEnvironmentVariable("Game_POE2_TRACE") == "1";
@@ -151,7 +151,7 @@ partial class Program
                     gold: ticket.Gold == 0 ? Poe2StartingGold : ticket.Gold,
                     onProgress: (experience, gold) => _ = SavePoe2Progress(remote, opening.Ticket, experience, gold),
                     gems: ticket.Gems, onGems: gems => _ = SavePoe2Gems(remote, opening.Ticket, gems), gemTable: Poe2GemTable.Value,
-                    startingGem: true);
+                    startingGem: true, items: ticket.Items, onItems: items => _ = SavePoe2Items(remote, opening.Ticket, items));
                 if (Poe2GemTable.Value.Count == 0)
                     Console.WriteLine($"[gateway] {remote} no {Poe2Gems.DefaultPath}: no gem skills, no uncut gems (scripts/re/poe2/gems.py)");
                 var clock = Stopwatch.StartNew();
@@ -220,7 +220,7 @@ partial class Program
                 string.IsNullOrEmpty(resolved.Character) ? "Exile" : resolved.Character,
                 Enum.IsDefined((CharacterClass)resolved.Class) ? (CharacterClass)resolved.Class : CharacterClass.Witch,
                 Math.Clamp(resolved.Level, 1, 100), resolved.QuestFlags ?? [], resolved.Waypoints ?? [], resolved.Passives ?? [],
-                resolved.Experience, resolved.Gold, resolved.Gems ?? []);
+                resolved.Experience, resolved.Gold, resolved.Gems ?? [], resolved.Items ?? []);
         Console.WriteLine($"[gateway] {remote} ticket 0x{ticket:x8} not resolved ({resolved.Error ?? "unknown area"}); " +
                           "Clearfell Encampment, seed 1, instance 1");
         return new(Poe2FallbackArea, 1, 1, "Exile", CharacterClass.Witch, 1, [], [], []);
@@ -242,6 +242,13 @@ partial class Program
     static readonly Lazy<Poe2Passives> Poe2PassiveNodes = new(() => Poe2Passives.Load());
 
     static readonly Lazy<Poe2Gems> Poe2GemTable = new(() => Poe2Gems.Load());
+
+    // The whole inventory goes to Auth ("set_items") after each change (wave 31).
+    static async Task SavePoe2Items(string remote, uint ticket, IReadOnlyList<SavedItem> items)
+    {
+        var saved = await InstanceControl.CallAsync(new ControlRequest { Op = "set_items", Ticket = ticket, Items = [.. items] });
+        if (!saved.Ok) Console.WriteLine($"[gateway] {remote} {items.Count} items not saved: {saved.Error ?? "no answer"}");
+    }
 
     // The character's whole list of socketed gems goes to Auth ("set_gems") at each cut (wave 30).
     static async Task SavePoe2Gems(string remote, uint ticket, IReadOnlyCollection<int> gems)

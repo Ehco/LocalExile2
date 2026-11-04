@@ -80,6 +80,7 @@ public sealed partial class InstanceSessionPoe2
         messages.Add(InstanceGemsPoe2.ActorSkills(PlayerId, _player.Skills!));
         messages.Add(InstanceProtocolPoe2.SkillList([(skill.Id, 0)], merge: true));
         _onGems?.Invoke(EncodedGems());
+        ItemsChanged();
         return messages;
     }
 }

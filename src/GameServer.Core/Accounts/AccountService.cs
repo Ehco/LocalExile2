@@ -250,6 +250,19 @@ public sealed class AccountService(IAccountStore store, TimeProvider? clock = nu
         }
     }
 
+    /// <summary>Replaces a PoE2 character's saved inventory, found by name (wave 31).</summary>
+    public Result<Character> SetItems(string characterName, IReadOnlyList<SavedItem> items)
+    {
+        lock (_gate)
+        {
+            var c = store.FindCharacter(characterName);
+            if (c is null) return Result<Character>.Fail(AuthError.NotFound);
+            var u = c with { Items = [.. items] };
+            store.UpdateCharacter(u);
+            return Result<Character>.Success(u);
+        }
+    }
+
     /// <summary>Sets a PoE2 character's total experience and gold, found by name (wave 29).</summary>
     public Result<Character> SetProgress(string characterName, uint experience, uint gold)
     {

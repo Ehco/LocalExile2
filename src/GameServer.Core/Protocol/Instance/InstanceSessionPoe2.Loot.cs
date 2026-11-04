@@ -120,5 +120,6 @@ public sealed partial class InstanceSessionPoe2
         _groundItems.Remove(p.Item);
         yield return InstanceProtocolPoe2.RemoveObject(p.Item);
         yield return change;
+        ItemsChanged();
     }
 }

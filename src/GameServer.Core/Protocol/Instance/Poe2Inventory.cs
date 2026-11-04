@@ -55,6 +55,65 @@ public sealed class Poe2Inventory(uint inventoryId, byte width, byte height)
             [.. added.Select(e => new InventoryItem(e.Id, e.X, e.Y, e.Item))]);
     }
 
+    /// <summary>The entry with this id, or null.</summary>
+    public Entry? Find(uint itemId) => _items.FirstOrDefault(e => e.Id == itemId);
+
+    /// <summary>Takes an item out whole. Returns the change to send, or null for an id not here.</summary>
+    public byte[]? Remove(uint itemId)
+    {
+        if (_items.FirstOrDefault(e => e.Id == itemId) is not { } entry) return null;
+        _items.Remove(entry);
+        return InstanceInventoriesPoe2.InventoryChange(inventoryId, ++_revision, [entry.Id], []);
+    }
+
+    /// <summary>Puts a saved item back at its cell when the cell is free; null when it is not (nothing changes).</summary>
+    public byte[]? Restore(Item item, byte itemWidth, byte itemHeight, byte x, byte y)
+    {
+        if (x + itemWidth > width || y + itemHeight > height || Overlapping(x, y, itemWidth, itemHeight).Any()) return null;
+        var entry = new Entry(_nextId++, x, y, itemWidth, itemHeight, 1, item);
+        _items.Add(entry);
+        return InstanceInventoriesPoe2.InventoryChange(inventoryId, ++_revision, [], [new InventoryItem(entry.Id, x, y, item)]);
+    }
+
+    /// <summary>What a placement did: the change to send for this inventory, the item it pushed out (a swap), and what
+    /// of the placed stack did not fit on the stack it went onto (still the holder's).</summary>
+    public sealed record Placement(byte[] Change, Entry? Displaced = null, Item? Rest = null);
+
+    /// <summary>
+    /// Puts an item at a cell (PoE1's rules, wave 31): where nothing overlaps it goes there; where exactly one item
+    /// overlaps, a stack of its type takes as much as it can (the rest stays with the holder) and any other item is
+    /// swapped out; two or more overlapping items, or a cell out of the grid, refuse (null, nothing changes).
+    /// </summary>
+    public Placement? Place(Item item, byte itemWidth, byte itemHeight, byte x, byte y, int maxStack)
+    {
+        if (x + itemWidth > width || y + itemHeight > height) return null;
+        var over = Overlapping(x, y, itemWidth, itemHeight).ToList();
+        if (over.Count > 1) return null;
+        if (over.Count == 0)
+        {
+            var entry = new Entry(_nextId++, x, y, itemWidth, itemHeight, maxStack, item);
+            _items.Add(entry);
+            return new(InstanceInventoriesPoe2.InventoryChange(inventoryId, ++_revision, [], [new InventoryItem(entry.Id, x, y, item)]));
+        }
+        var other = over[0];
+        if (other.Item.TypeHash == item.TypeHash && maxStack > 1 && other.Item.StackSize < maxStack)
+        {
+            int put = Math.Min(item.StackSize, maxStack - other.Item.StackSize);
+            _items.Remove(other);
+            var grown = other with { Id = _nextId++, Item = other.Item with { StackSize = (ushort)(other.Item.StackSize + put) } };
+            _items.Add(grown);
+            var rest = item.StackSize > put ? item with { StackSize = (ushort)(item.StackSize - put) } : null;
+            return new(InstanceInventoriesPoe2.InventoryChange(inventoryId, ++_revision, [other.Id], [new InventoryItem(grown.Id, grown.X, grown.Y, grown.Item)]), null, rest);
+        }
+        _items.Remove(other);
+        var placed = new Entry(_nextId++, x, y, itemWidth, itemHeight, maxStack, item);
+        _items.Add(placed);
+        return new(InstanceInventoriesPoe2.InventoryChange(inventoryId, ++_revision, [other.Id], [new InventoryItem(placed.Id, x, y, item)]), other);
+    }
+
+    private IEnumerable<Entry> Overlapping(int x, int y, int itemWidth, int itemHeight) =>
+        _items.Where(e => x < e.X + e.Width && e.X < x + itemWidth && y < e.Y + e.Height && e.Y < y + itemHeight);
+
     /// <summary>Takes <paramref name="count"/> of a stack out (the whole item when the stack is not bigger; a bigger
     /// stack is removed and added again smaller with a new id, as a grown one is). Returns the change to send, or null
     /// for an id not here.</summary>
