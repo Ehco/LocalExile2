@@ -41,10 +41,12 @@ public sealed partial class InstanceSessionPoe2
         _waypoints.UnionWith(waypoints ?? []);
         if (area is not null)
         {
-            // Entering the area sets its flags (WorldAreas FlagOnEntered: Visited-G1_2 ...), and a town's waypoint is
-            // active from the first visit, as PoE1's server does.
+            // Entering the area sets its flags (WorldAreas FlagOnEntered: Visited-G1_2 ...) and grants the ones the game
+            // expects there (Poe2Quests.GrantedFlags: Visited-G1_1 and MillerDefeated in the camp, which Auth enters
+            // directly; live 2026-11-04 the World panel hid the camp's pin without them). A town's waypoint is active
+            // from the first visit, as PoE1's server does.
             int entered = 0;
-            foreach (string flag in _quests.EnteredFlags(area.Id)) if (_questFlags.Add(flag)) entered++;
+            foreach (string flag in _quests.EnteredFlags(area.Id).Concat(_quests.GrantedFlags(area.Id))) if (_questFlags.Add(flag)) entered++;
             if (entered > 0) _onQuestFlags?.Invoke([.. _questFlags]);
             if (area.Town && _quests.WaypointBit(area.Hash) is not null && _waypoints.Add(area.Id)) _onWaypoints?.Invoke([.. _waypoints]);
         }

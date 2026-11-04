@@ -18,10 +18,14 @@ public sealed class Poe2Quests
     readonly Dictionary<string, int> _flagRows = new(StringComparer.Ordinal);
     readonly Dictionary<ushort, int> _bitOfHash = [];
     readonly Dictionary<string, int> _bitOfId = new(StringComparer.Ordinal);
-    readonly IReadOnlyDictionary<string, string[]> _entered;
+    readonly IReadOnlyDictionary<string, string[]> _entered, _granted;
 
+    /// <param name="entered">Per area, the flags entering it sets (WorldAreas FlagOnEntered).</param>
+    /// <param name="granted">Per area, the flags the game expects a character there to have (its RequiredFlags, and a
+    /// town's the visit flags of the act's first area): Auth drops characters straight into the camp, so entering grants
+    /// them too. Without them the World panel hides the camp's pin and the map (MapPins G1_town needs Visited-G1_1).</param>
     public Poe2Quests(IReadOnlyList<string> flags, IReadOnlyList<WaypointArea> waypoints,
-        IReadOnlyDictionary<string, string[]>? entered = null)
+        IReadOnlyDictionary<string, string[]>? entered = null, IReadOnlyDictionary<string, string[]>? granted = null)
     {
         for (int i = 0; i < flags.Count; i++) _flagRows.TryAdd(flags[i], i);
         Waypoints = waypoints;
@@ -31,6 +35,7 @@ public sealed class Poe2Quests
             _bitOfId.TryAdd(waypoints[i].Id, i);
         }
         _entered = entered ?? new Dictionary<string, string[]>();
+        _granted = granted ?? new Dictionary<string, string[]>();
     }
 
     /// <summary>No tables: flags are kept but not sent, no waypoint is known.</summary>
@@ -48,11 +53,16 @@ public sealed class Poe2Quests
                 e.TryGetProperty("act", out var act) ? act.GetInt32() : 0, e.TryGetProperty("town", out var town) && town.GetBoolean())).ToList()
             : [];
         var entered = new Dictionary<string, string[]>(StringComparer.Ordinal);
+        var granted = new Dictionary<string, string[]>(StringComparer.Ordinal);
         if (root.TryGetProperty("areas", out var areas))
             foreach (var area in areas.EnumerateObject())
+            {
                 if (area.Value.TryGetProperty("entered", out var list))
                     entered[area.Name] = [.. list.EnumerateArray().Select(e => e.GetString() ?? "")];
-        return new(flags, waypoints, entered);
+                if (area.Value.TryGetProperty("granted", out var given))
+                    granted[area.Name] = [.. given.EnumerateArray().Select(e => e.GetString() ?? "")];
+            }
+        return new(flags, waypoints, entered, granted);
     }
 
     /// <summary>How many QuestFlags rows the table has (0 without it: nothing to send the client).</summary>
@@ -78,4 +88,7 @@ public sealed class Poe2Quests
 
     /// <summary>The flags entering the area sets (WorldAreas FlagOnEntered); none for an unknown area.</summary>
     public IReadOnlyList<string> EnteredFlags(string areaId) => _entered.GetValueOrDefault(areaId) ?? [];
+
+    /// <summary>The flags a character in the area is expected to have (see the constructor); none for an unknown area.</summary>
+    public IReadOnlyList<string> GrantedFlags(string areaId) => _granted.GetValueOrDefault(areaId) ?? [];
 }

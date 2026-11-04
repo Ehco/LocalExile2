@@ -9,7 +9,11 @@
   with HasWaypoint whose column _45 (the row's +0x1b4) is 1 (a town), 2 (an area) or 31, at most 175, as the client's
   0x141f68930 lists them. Each with its Id, HASH16, act and whether it is a town.
 - "areas": per WorldAreas Id, "entered": the Ids of its FlagOnEntered flags (Visited-G1_2 ...), which the server sets when
-  the character enters the area; the NPCs' gossip options need them.
+  the character enters the area (the NPCs' gossip options need them), and "granted": the flags the game expects a
+  character there to have, which the server grants on entry too, since Auth drops new characters straight into the
+  camp: the area's RequiredFlags (MillerDefeated for the Act 1 areas) and, for a town, the FlagOnEntered of the act's
+  first areas (those that connect to the town alone: Visited-G1_1). Live 2026-11-04 the World panel hid the camp's pin
+  and the map's border without Visited-G1_1 (MapPins G1_town / G1_MapBorder_* QuestFlags1).
 
 Files come from the Steam bundles through scripts/re/poe2/steamdump and are cached in Tools/re/out/poe2 (dat.py).
 """
@@ -33,7 +37,21 @@ def main():
     areas = dat.table("WorldAreas")
     waypoints = [{"id": r["Id"], "hash": r["HASH16"], "act": r["Act"], "town": bool(r["IsTown"])}
                  for r in areas if r["HasWaypoint"] and r["_45"] in WAYPOINT_KINDS][:MAX_WAYPOINTS]
-    entered = {r["Id"]: {"entered": [flags[f] for f in r["FlagOnEntered"]]} for r in areas if r["FlagOnEntered"]}
+    def granted(row, r):
+        given = [flags[f] for f in r["RequiredFlags"] or []]
+        if r["IsTown"]:
+            for first in areas:
+                if first["Act"] == r["Act"] and first["Connections"] == [row]:
+                    given += [flags[f] for f in first["FlagOnEntered"] or []]
+        return given
+
+    entered = {}
+    for row, r in enumerate(areas):
+        given = granted(row, r)
+        if r["FlagOnEntered"] or given:
+            entered[r["Id"]] = {"entered": [flags[f] for f in r["FlagOnEntered"] or []], "granted": given}
+    for r in areas:
+        if r["IsTown"] and r["Id"] in entered: print(f'{r["Id"]}: granted {entered[r["Id"]]["granted"]}', file=sys.stderr)
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(OUT, "w", encoding="utf-8") as f:
         f.write('{\n "flags": ' + json.dumps(flags, separators=(",", ":")) + ',\n "waypoints": [\n'

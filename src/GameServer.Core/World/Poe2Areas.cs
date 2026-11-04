@@ -86,15 +86,18 @@ public static class Poe2Areas
         return exits;
     }
 
-    /// <summary>Where a player coming from <paramref name="cameFrom"/> appears: the arrival marker by the exit back to it,
-    /// else a walkable cell a few cells from that exit (the town's gates have no marker); null when no exit leads back.</summary>
+    /// <summary>Where a player coming from <paramref name="cameFrom"/> appears: the arrival marker by the exit back to it
+    /// when it stands on walkable ground, else a walkable cell a few cells from that exit (the town's gates have no
+    /// marker; Clearfell's markers sit in the exit tiles' blocked border, 14 cells outside the walkable ground: a player
+    /// put there walked through walls on the server while the client held it back, live 2026-11-04); null when no exit
+    /// leads back.</summary>
     public static (int X, int Y)? Arrival(ushort cameFrom, IReadOnlyList<AreaTransitionObjectPoe2> exits,
         IReadOnlyList<PlacedObject> objects, Func<int, int, bool>? walkable)
     {
         if (exits.FirstOrDefault(e => e.DestinationHash16 == cameFrom) is not { } back) return null;
         var marker = objects.Where(o => o.Type == ArrivalType && Chebyshev(o.X, o.Y, back) <= ArrivalMarkerReach)
             .MinBy(o => Chebyshev(o.X, o.Y, back));
-        return marker is not null ? (marker.X, marker.Y) : Near(back.GridX, back.GridY, walkable);
+        return marker is not null && (walkable is null || walkable(marker.X, marker.Y)) ? (marker.X, marker.Y) : Near(back.GridX, back.GridY, walkable);
     }
 
     static int Chebyshev(int x, int y, AreaTransitionObjectPoe2 exit) => Math.Max(Math.Abs(x - exit.GridX), Math.Abs(y - exit.GridY));

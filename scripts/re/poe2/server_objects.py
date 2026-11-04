@@ -50,10 +50,19 @@ def main():
     files = monster_varieties.load(placed)
     npc_rows = {r["Id"]: i for i, r in enumerate(dat.table("NPCs"))}
     categories = [r["Id"] for r in dat.table("NPCTalkCategory")]
+    flag_ids = [r["Id"] for r in dat.table("QuestFlags")]
+
+    def flags(v):
+        return [flag_ids[i] for i in (v if isinstance(v, list) else [v] if v is not None else [])]
+
     talk = {}
     for r in dat.table("NPCTalk"):
         if r["NPCKey"] is not None and r["Category"] is not None:
-            talk.setdefault(r["NPCKey"], []).append([r["_1"] or 0, categories[r["Category"]]])
+            finish = flag_ids[r["QuestFlag2"]] if r["QuestFlag2"] is not None else None
+            talk.setdefault(r["NPCKey"], []).append({
+                "index": r["_1"] or 0, "category": categories[r["Category"]], "requires": flags(r["_3"]),
+                "excludes": flags(r["_4"]), "start": flags(r["QuestFlags1"]),
+                "finish": None if finish == "NEVER_SET" else finish, "script": r["Script"] or ""})
     rows = []
     for t in placed:
         m = ot_components.merge(t, files, {})

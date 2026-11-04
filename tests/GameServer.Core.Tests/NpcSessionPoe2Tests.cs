@@ -15,9 +15,10 @@ public class NpcSessionPoe2Tests
 
     // Flags in row order; two waypoint areas; the entry flags of both.
     static readonly string[] Flags = ["Visited-G1_town", "UnaIntroduced", "UnaClearfell1GossipSeen", "TreeOfSoulsQuestReceived",
-        "IronCountKilled", "UnaRingAnimationPlayed", "Visited-G1_2"];
+        "IronCountKilled", "UnaRingAnimationPlayed", "Visited-G1_2", "Visited-G1_1", "MillerDefeated"];
     static readonly Poe2Quests Quests = new(Flags, [new("G1_town", 0x3f70, 1, true), new("G1_2", 0x9875, 1, false)],
-        new Dictionary<string, string[]> { ["G1_town"] = ["Visited-G1_town"], ["G1_2"] = ["Visited-G1_2"] });
+        new Dictionary<string, string[]> { ["G1_town"] = ["Visited-G1_town"], ["G1_2"] = ["Visited-G1_2"] },
+        new Dictionary<string, string[]> { ["G1_town"] = ["Visited-G1_1", "MillerDefeated"] });
     static readonly Poe2Areas.Area Town = Poe2Areas.ById("G1_town")!, Clearfell = Poe2Areas.ById("G1_2")!;
     static readonly string[] NpcComponents =
         ["Positioned", "Animated", "BaseEvents", "InteractionAction", "NPC", "MinimapIcon", "Transitionable", "StateMachine"];
@@ -69,7 +70,7 @@ public class NpcSessionPoe2Tests
     static IEnumerable<string> Ids(IEnumerable<byte[]> messages) => messages.Select(m => Convert.ToHexString(m, 0, 2));
 
     [Fact]
-    public void Entering_a_town_sets_its_visit_flag_activates_its_waypoint_and_sends_both_after_the_objects()
+    public void Entering_a_town_sets_its_visit_and_granted_flags_activates_its_waypoint_and_sends_both_after_the_objects()
     {
         var saved = new Saved();
         var session = Session(Town, saved, objects: [Una(210, 200), Waypoint(200, 260)]);
@@ -77,9 +78,9 @@ public class NpcSessionPoe2Tests
         var sent = session.Handle(AreaGenerated, 0);
 
         Assert.Equal(["0024", "02F7", "00DF", "0023", "02F5", "0066", "02F7", "02F7", "02F9", "005A"], Ids(sent));
-        Assert.Equal(InstanceQuestsPoe2.PlayerQuestFlags(session.PlayerId, [0]), sent[^2]);
+        Assert.Equal(InstanceQuestsPoe2.PlayerQuestFlags(session.PlayerId, [0, 7, 8]), sent[^2]);
         Assert.Equal(InstanceWaypointsPoe2.Waypoints([0]), sent[^1]);
-        Assert.Equal(["Visited-G1_town"], saved.Flags);
+        Assert.Equal(["MillerDefeated", "Visited-G1_1", "Visited-G1_town"], saved.Flags!.Order());
         Assert.Equal(["G1_town"], saved.Waypoints);
         Assert.Equal((uint)0x1001, session.ServerObjectId(0));
     }
@@ -161,14 +162,14 @@ public class NpcSessionPoe2Tests
         var closed = session.Handle(Goodbye, 5);
 
         // Introduction: its start flag, then the talk; its finish flag is the same, so Continue only goes back.
-        Assert.Equal([InstanceQuestsPoe2.PlayerQuestFlags(session.PlayerId, [0, 1]), InstanceNpcsPoe2.Talk(0x1001, 0)], introduction);
+        Assert.Equal([InstanceQuestsPoe2.PlayerQuestFlags(session.PlayerId, [0, 1, 7, 8]), InstanceNpcsPoe2.Talk(0x1001, 0)], introduction);
         Assert.Equal([InstanceNpcsPoe2.Talk(0x1001)], backFromIntroduction);
         // Clearfell: no start flag; Continue sets its finish flag.
         Assert.Equal([InstanceNpcsPoe2.Talk(0x1001, 1)], clearfell);
-        Assert.Equal([InstanceQuestsPoe2.PlayerQuestFlags(session.PlayerId, [0, 1, 2]), InstanceNpcsPoe2.Talk(0x1001)], backFromClearfell);
+        Assert.Equal([InstanceQuestsPoe2.PlayerQuestFlags(session.PlayerId, [0, 1, 2, 7, 8]), InstanceNpcsPoe2.Talk(0x1001)], backFromClearfell);
         Assert.Equal([InstanceNpcsPoe2.Talk(0)], closed);
         Assert.Equal(0u, session.TalkingTo);
-        Assert.Equal(["UnaClearfell1GossipSeen", "UnaIntroduced", "Visited-G1_town"], saved.Flags!.Order());
+        Assert.Equal(["MillerDefeated", "UnaClearfell1GossipSeen", "UnaIntroduced", "Visited-G1_1", "Visited-G1_town"], saved.Flags!.Order());
     }
 
     [Fact]

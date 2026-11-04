@@ -1865,13 +1865,31 @@ and travels. Code: `ServerObjectPoe2.cs`, `Poe2ServerObjects.cs`,
     object (`Poe2Areas.WaypointArrival`; `CameFrom` remembers `ByWaypoint`).
     Ctrl (PoE1's instance chooser) travels too.
 
-**Live test (2026-11-04, the first half).** In Clearfell Encampment the 19
-objects appeared with their minimap icons; a click on Una opened her dialogue;
-Introduction, Clearfell and Secrets in the Dark played; Buy or Sell items
-opened an empty buy window; Goodbye closed it; a click on the waypoint opened
-the World panel (with no pin lit). The quest flags, the NPC states after a
-flag, the waypoint activation and the travel were written afterwards from the
-binary and are covered by unit tests only.
+**Live test (2026-11-04).** In Clearfell Encampment the 19 objects appeared
+with their minimap icons. Una: Introduction, Clearfell and Secrets in the Dark
+played; Buy or Sell items opened an empty buy window; Goodbye closed it. The
+quest flags went out with `0x2f9` after the objects and after each option; Auth
+saved them (6 after the tour); after a relog Una's Introduction had changed
+state in her list. The camp's waypoint was lit on arrival, its pin lit on the
+World panel; in Clearfell the waypoint lit up on approach (`0x5a` bit 1,
+"2 waypoints saved"); the pin click sent `0x5b` both ways (`005B 00 9875
+00001006 00` from the camp, `005B 00 3F70 00001007 00` from Clearfell), the
+transfer arrived 8 cells from the destination's waypoint. Two fixes came out
+of it:
+- Clearfell's arrival markers (AreaTransition_Auto) sit in the exit tiles'
+  blocked border, 14 cells outside the walkable ground: the player arrived
+  "off the map", the server's estimate walked through walls from there (a
+  blocked start cell walks freely) and every echo pulled the client back. A
+  marker off the walkable ground now gives way to a walkable cell 8–20 cells
+  from the exit (`Poe2Areas.Arrival`): the gate now lands on (993, 482).
+- The World panel hid the camp's pin, and the map's border, while the
+  character lacked `Visited-G1_1`: MapPins reveal a pin when any of its
+  `QuestFlags1` is set (the camp's and the border's need The Riverbank
+  visited; Clearfell's needs `Visited-G1_town`). Auth enters new characters
+  in the camp, so entering an area now also grants the flags the game expects
+  there (`quests.json` "granted": the area's WorldAreas `RequiredFlags`,
+  `MillerDefeated` in Act 1, and in a town the `FlagOnEntered` of the act's
+  first areas, those connecting to the town alone: `Visited-G1_1`).
 
 Ruled out (do not retry):
 - `0x87` (reader `0x142154aa0`: u8, u32, u8, a 17-byte block) as the talk

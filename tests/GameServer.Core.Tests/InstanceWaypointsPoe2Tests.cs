@@ -72,7 +72,8 @@ public class InstanceWaypointsPoe2Tests
               {"id":"G1_2","hash":39029,"act":1,"town":false}
              ],
              "areas": {
-              "G1_town":{"entered":["Visited-G1_town"]}
+              "G1_town":{"entered":["Visited-G1_town"],"granted":["Visited-G1_1","MillerDefeated"]},
+              "G1_2":{"entered":["Visited-G1_2"]}
              }
             }
             """);
@@ -85,6 +86,8 @@ public class InstanceWaypointsPoe2Tests
             Assert.Equal(["G1_town", "G1_2"], q.Waypoints.Select(w => w.Id));
             Assert.Equal(1, q.WaypointBit((ushort)39029));
             Assert.Equal(["Visited-G1_town"], q.EnteredFlags("G1_town"));
+            Assert.Equal(["Visited-G1_1", "MillerDefeated"], q.GrantedFlags("G1_town"));
+            Assert.Empty(q.GrantedFlags("G1_2"));
         }
         finally { File.Delete(path); }
         Assert.Same(Poe2Quests.Empty, Poe2Quests.Load(Path.Combine(Path.GetTempPath(), $"none-{Guid.NewGuid():N}.json")));

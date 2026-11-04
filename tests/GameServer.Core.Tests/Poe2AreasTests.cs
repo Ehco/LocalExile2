@@ -78,6 +78,20 @@ public class Poe2AreasTests
     }
 
     [Fact]
+    public void A_marker_off_the_walkable_ground_gives_way_to_a_walkable_cell_by_the_exit()
+    {
+        // Clearfell's markers sit in the exit tiles' blocked border (live 2026-11-04: the player arrived through walls).
+        var exits = Poe2Areas.Exits(Area("G1_2"), Clearfell, []);
+        bool Walkable(int x, int y) => y >= 478 && x is >= 990 and <= 1012;
+
+        var (x, y) = Poe2Areas.Arrival(Area("G1_town").Hash, exits, Clearfell, Walkable)!.Value;
+
+        Assert.True(Walkable(x, y));
+        Assert.True(Math.Max(Math.Abs(x - 1001), Math.Abs(y - 474)) > InstanceSessionPoe2.ExitReach);
+        Assert.Equal((1001, 460), Poe2Areas.Arrival(Area("G1_town").Hash, exits, Clearfell, (_, _) => true));
+    }
+
+    [Fact]
     public void Without_a_marker_the_arrival_is_a_walkable_cell_out_of_the_exits_reach()
     {
         AreaTransitionObjectPoe2[] gate = [new(324, 189, Area("G1_2").Hash)];

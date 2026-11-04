@@ -304,13 +304,22 @@ partial class Program
     static IReadOnlyList<ServerObjectPoe2> Poe2AreaServerObjects(string remote, ushort hash, IReadOnlyList<Poe2Areas.PlacedObject> objects)
     {
         string id = Poe2AreaId(hash);
-        if (Poe2ObjectTypes.Value.Count == 0)
+        IReadOnlyDictionary<string, Poe2ServerObjects.ObjectType> types;
+        try { types = Poe2ObjectTypes.Value; }
+        catch (System.Text.Json.JsonException e)
+        {
+            // An older file (wave 27 changed its talk entries): the area goes without NPCs rather than without a player.
+            Console.WriteLine($"[gateway] {remote} {Poe2ServerObjects.DefaultPath} not readable ({e.Message}); no NPCs. " +
+                              "Rerun scripts/re/poe2/server_objects.py");
+            return [];
+        }
+        if (types.Count == 0)
         {
             Console.WriteLine($"[gateway] {remote} no {Poe2ServerObjects.DefaultPath}: no NPCs");
             return [];
         }
         var notes = new List<string>();
-        var placed = Poe2ServerObjects.InArea(objects, Poe2ObjectTypes.Value, notes);
+        var placed = Poe2ServerObjects.InArea(objects, types, notes);
         foreach (var note in notes) Console.WriteLine($"[gateway] {remote} {id}: {note}");
         Console.WriteLine($"[gateway] {remote} {id}: {placed.Count} server objects " +
             string.Join(", ", placed.Select(o => $"{o.TypePath.Split('/')[^1]} ({o.GridX}, {o.GridY})")));

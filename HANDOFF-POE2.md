@@ -4,9 +4,9 @@ Read this first if you are picking up the PoE2 work. It covers where things stan
 from nothing, how to run a live test, and what to do next. The wave-by-wave findings (addresses, message layouts,
 live results) are in [PORTING-POE2.md](PORTING-POE2.md). This file points into it and does not repeat it.
 
-Last updated 2026-11-04, after wave 27 (NPCs, dialogue, quest flags, waypoints). Its second half (quest flags, NPC
-states, waypoint activation and travel) is covered by unit tests only: see "Wave 27 follow-ups" below for the live
-checks to make.
+Last updated 2026-11-04, after wave 27 (NPCs, dialogue, quest flags, waypoints), tested live: dialogue flags, the
+waypoint activation and the travel both ways. A flag that changes an NPC's state is not reachable yet (see "Wave 27
+follow-ups").
 
 ## Where it stands
 
@@ -40,7 +40,7 @@ are saved and drive the NPCs' states; the waypoint opens the World panel and tra
 | Experience, levels | A kill's experience in the Player component (`0x2f9`); a new level raises and refills life and mana and is saved to Auth. The experience into a level is not saved | `InstanceSessionPoe2.Experience.cs`, `InstanceProgressionPoe2.cs`, `scripts/re/poe2/experience_levels.py`; wave 24 |
 | Drops, pickup | A kill may drop currency on the ground (`0x2f7` WorldItem, 35 % or `Game_POE2_DROP_CHANCE`); a click walks to it and puts it in the main inventory (`0x2fa`, `0xde`). The inventory is not saved | `InstanceSessionPoe2.Loot.cs`, `Poe2Inventory.cs`, `Poe2Items.cs`, `scripts/re/poe2/item_types.py`; wave 25 |
 | Starting weapon | The class's starting weapon in the main hand (`0xde` into Weapon1), drawn on the model, usable (Mods `+0x263` = 7) and swung with Default Attack at the weapon's values; monster damage scaled to 50 % (`Game_POE2_MONSTER_DAMAGE`). The weapon's own attack (Mace Strike) stays greyed; equipment is not saved | `Poe2StartingSkills.cs`, `InstanceSessionPoe2.Loot.cs`, `InstanceItems.cs`, `PlayerObjectPoe2.cs`, `Poe2Items.cs`; wave 26 |
-| NPCs, dialogue, quest flags, waypoints | The town's NPCs, waypoint, stash and well are drawn; a click on an NPC opens its dialogue (`0xa3`), its options (`0xa1` / `0xa4`) set the quest flags (start, finish and Script flags) and play their talks, Buy opens an empty buy window (`0xaf`). The flags are saved per character (Auth), sent as a Player update (`0x2f9`) and recompute the NPCs' states (objects created again). The waypoint activates (town, click, 25 cells; `0x5a`), opens the World panel (`0x98`) and travels (`0x5b` → `0x2f1`, arrival by the waypoint). No shop stock; the second half is untested live | `ServerObjectPoe2.cs`, `Poe2ServerObjects.cs`, `Poe2Quests.cs`, `InstanceSessionPoe2.Npcs.cs`, `InstanceSessionPoe2.Quests.cs`, `InstanceNpcsPoe2.cs`, `InstanceQuestsPoe2.cs`, `InstanceWaypointsPoe2.cs`, `scripts/re/poe2/server_objects.py`, `quests.py`; wave 27 |
+| NPCs, dialogue, quest flags, waypoints | The town's NPCs, waypoint, stash and well are drawn; a click on an NPC opens its dialogue (`0xa3`), its options (`0xa1` / `0xa4`) set the quest flags (start, finish and Script flags) and play their talks, Buy opens an empty buy window (`0xaf`). The flags are saved per character (Auth), sent as a Player update (`0x2f9`) and recompute the NPCs' states (objects created again). The waypoint activates (town, click, 25 cells; `0x5a`), opens the World panel (`0x98`) and travels (`0x5b` → `0x2f1`, arrival by the waypoint), all live. No shop stock | `ServerObjectPoe2.cs`, `Poe2ServerObjects.cs`, `Poe2Quests.cs`, `InstanceSessionPoe2.Npcs.cs`, `InstanceSessionPoe2.Quests.cs`, `InstanceNpcsPoe2.cs`, `InstanceQuestsPoe2.cs`, `InstanceWaypointsPoe2.cs`, `scripts/re/poe2/server_objects.py`, `quests.py`; wave 27 |
 
 **Tests.** 679/679 pass:
 
@@ -162,7 +162,8 @@ Once per machine. Everything generated here lives in `data/`, which git ignores.
     ```bash
     python scripts/re/poe2/quests.py
     ```
-    - It exists here (6252 flags, 103 waypoint areas, 274 areas with entry flags).
+    - It exists here (6252 flags, 103 waypoint areas, 402 areas with entry or granted flags). Rerun it after wave 27's
+      live fixes ("granted" flags).
 
 ## Running a live test
 
@@ -275,20 +276,14 @@ This is the method used for waves 4–14, so the next wave does not start from z
 
 ## Wave 27 follow-ups (NPCs, dialogue, quest flags, waypoints)
 
-The findings are in PORTING-POE2.md, wave 27. The first half (server objects, the dialogue, its talks, the empty buy
-window, the World panel) was tested live on 2026-11-04; the second half (quest flags, NPC states, waypoint activation
-and travel) was mapped in the binary and is covered by unit tests only.
+The findings are in PORTING-POE2.md, wave 27. Tested live on 2026-11-04: the server objects, the dialogue and its
+talks, the empty buy window, the quest flags (sent, saved, reloaded, the option list following them), the waypoint
+activation on approach, the World panel's pins and the travel both ways, the arrival by the gate and by the waypoint.
 
-**Live checks to make** (Clearfell Encampment, `Game_POE2_TRACE=1` on the Gateway):
-- On entering: the Gateway logs the character's flags and waypoints, then sends `0x2f9` and `0x5a` after the
-  objects. The waypoint should be lit; the World panel should show the camp's pin lit.
-- Una's Introduction: `0x2f9` with `UnaIntroduced` and the talk; the Gateway logs "quest flags saved"; after a
-  relog the option list is built for the new flags (Introduction gone or unhighlighted).
-- "Home" gossip: available only once Clearfell was visited (`Visited-G1_2`).
-- Clearfell: walk up to its waypoint (25 cells) or click it: `0x5a` with bit 1 and the activation animation; then
-  the town's pin on the panel; a click on it: `0x5b` in the trace, `0x2f1`, the arrival by the town's waypoint.
+**Still to see live:**
 - A flag that changes an NPC's state (`Use Ring` needs the ring; none is reachable yet): the object is removed and
   created again. Watch for a client complaint on the re-creation of an NPC.
+- A Music option (ends the dialogue; its interlude is the client's `Script2`).
 
 **Left out (wave 27 scope):**
 - The shop (Next steps 7). QuestReward and SellItems options do nothing; Music options end the dialogue.
