@@ -72,7 +72,8 @@ public sealed partial class InstanceSessionPoe2
     /// the total experience and the gold whenever either changes (a kill, a gold pile taken, a refund), to save.</param>
     /// <param name="gems">The character's socketed skill gems (<see cref="Poe2Gems.Encode"/>), from its save;
     /// <paramref name="onGems"/> gets each new whole list to save; <paramref name="gemTable"/> gives their skills;
-    /// <paramref name="startingUncutGem"/> puts an Uncut Skill Gem (Level 1) in the inventory of a character with no gem.</param>
+    /// <paramref name="startingGem"/> sockets the class's starting gem for a character with no gem (as PoE2 does);
+    /// <paramref name="startingUncutGem"/> puts an Uncut Skill Gem (Level 1) in its inventory instead (for tests).</param>
     public InstanceSessionPoe2(PlayerObjectPoe2 player, string objectType = DefaultObjectType, uint playerId = DefaultPlayerId,
         double walkSpeed = DirectionWalk.DefaultSpeed, Func<int, int, bool>? walkable = null,
         IReadOnlyList<AreaTransitionObjectPoe2>? exits = null, IReadOnlyList<Poe2Monster>? monsters = null,
@@ -83,7 +84,8 @@ public sealed partial class InstanceSessionPoe2
         Action<IReadOnlyCollection<string>>? onQuestFlags = null, Action<IReadOnlyCollection<string>>? onWaypoints = null,
         IEnumerable<int>? passives = null, Action<IReadOnlyCollection<int>>? onPassives = null, ushort questPassivePoints = 0,
         Poe2Passives? passiveNodes = null, uint gold = 0, Action<uint, uint>? onProgress = null,
-        IEnumerable<int>? gems = null, Action<IReadOnlyCollection<int>>? onGems = null, Poe2Gems? gemTable = null, bool startingUncutGem = false)
+        IEnumerable<int>? gems = null, Action<IReadOnlyCollection<int>>? onGems = null, Poe2Gems? gemTable = null, bool startingGem = false,
+        bool startingUncutGem = false)
     {
         _onProgress = onProgress;
         (_player, _objectType, PlayerId, _exits, _monsters) = (player, objectType, playerId, exits ?? [], monsters ?? []);
@@ -95,7 +97,7 @@ public sealed partial class InstanceSessionPoe2
         _random = random ?? Random.Shared;
         InitExperience(levelStarts, onLevel);
         InitLoot(itemTypes, weapon);
-        InitGems(gems, gemTable, onGems, startingUncutGem);
+        InitGems(gems, gemTable, onGems, startingGem, startingUncutGem);
         InitMonsters();
     }
 

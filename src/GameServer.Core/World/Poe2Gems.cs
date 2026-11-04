@@ -6,7 +6,8 @@ namespace GameServer.Core.World;
 /// PoE2's skill gems and uncut gems (PORTING-POE2.md, wave 30), from data/poe2/gems.json (scripts/re/poe2/gems.py): a
 /// gem's base item, colour, kind, level requirement, its granted effect and, per gem level, the GrantedEffectsPerLevel
 /// row and the GrantedEffectStatSetsPerLevel rows the Actor's skill record refers to. An uncut gem is cut into a skill
-/// gem of its tier's level by the gem window.
+/// gem of its tier's level by the gem window. Each class starts with a gem (Characters StartSkillGem: Rolling Slam for
+/// the Warrior, Spark for the Sorceress ...).
 /// </summary>
 public sealed class Poe2Gems
 {
@@ -30,15 +31,21 @@ public sealed class Poe2Gems
     readonly IReadOnlyDictionary<int, Gem> _byRow;
     readonly IReadOnlyDictionary<uint, Gem> _byHash;
     readonly IReadOnlyList<Uncut> _uncut;
+    readonly IReadOnlyDictionary<string, int> _starting;
 
-    public Poe2Gems(IReadOnlyList<Gem> gems, IReadOnlyList<Uncut> uncut)
+    /// <param name="starting">The classes' starting gems: the class's object type (Characters Id) → the gem's row.</param>
+    public Poe2Gems(IReadOnlyList<Gem> gems, IReadOnlyList<Uncut> uncut, IReadOnlyDictionary<string, int>? starting = null)
     {
         _byRow = gems.GroupBy(g => g.Row).ToDictionary(g => g.Key, g => g.First());
         _byHash = gems.GroupBy(g => g.Hash).ToDictionary(g => g.Key, g => g.First());
         _uncut = uncut;
+        _starting = starting ?? new Dictionary<string, int>();
     }
 
     public static readonly Poe2Gems Empty = new([], []);
+
+    /// <summary>The gem a new character of a class (its object type, Characters Id) starts with, or null.</summary>
+    public Gem? StartingGem(string characterId) => _starting.TryGetValue(characterId, out int row) ? FindRow(row) : null;
 
     public int Count => _byRow.Count;
     public IEnumerable<Gem> Gems => _byRow.Values;
@@ -85,7 +92,10 @@ public sealed class Poe2Gems
         }
         var uncut = doc.RootElement.GetProperty("uncut").EnumerateArray()
             .Select(u => new Uncut(Str(u, "id"), Int(u, "row"), Str(u, "name"), u.GetProperty("hash").GetUInt32(), Int(u, "tier"), Str(u, "kind"))).ToList();
-        return new(gems, uncut);
+        var starting = new Dictionary<string, int>();
+        if (doc.RootElement.TryGetProperty("starting", out var list))
+            foreach (var s in list.EnumerateArray()) starting.TryAdd(Str(s, "character"), Int(s, "gem"));
+        return new(gems, uncut, starting);
     }
 
     static string Str(JsonElement e, string name) => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() ?? "" : "";

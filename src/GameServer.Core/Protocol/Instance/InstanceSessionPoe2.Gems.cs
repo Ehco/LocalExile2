@@ -21,10 +21,11 @@ public sealed partial class InstanceSessionPoe2
 
     private IReadOnlyCollection<int> EncodedGems() => [.. _gems.Select(g => Poe2Gems.Encode(g.Value.Gem.Row, g.Value.Level, g.Key))];
 
-    // The saved gems take their slots and become items (0xde on entering, after the starting weapon); a character with
-    // none gets an Uncut Skill Gem (Level 1) in its inventory, as PoE2 gives one early (ours is at each entry while the
-    // inventory is not saved). Called after InitLoot: the item types are needed.
-    private void InitGems(IEnumerable<int>? gems, Poe2Gems? table, Action<IReadOnlyCollection<int>>? onGems, bool startingUncutGem)
+    // The saved gems take their slots and become items (0xde on entering, after the starting weapon). A character with
+    // none gets its class's starting gem (Characters StartSkillGem) socketed in slot 0 and saved, as a new PoE2
+    // character has it; the test knob startingUncutGem puts an Uncut Skill Gem (Level 1) in its inventory instead.
+    // Called after InitLoot: the item types are needed.
+    private void InitGems(IEnumerable<int>? gems, Poe2Gems? table, Action<IReadOnlyCollection<int>>? onGems, bool startingGem, bool startingUncutGem)
     {
         (_gemTable, _onGems) = (table ?? Poe2Gems.Empty, onGems);
         foreach (var (row, level, slot) in (gems ?? []).Select(Poe2Gems.Decode))
@@ -32,6 +33,13 @@ public sealed partial class InstanceSessionPoe2
             if (_gemTable.FindRow(row) is not { } gem || _gems.ContainsKey((byte)slot) || slot >= InstanceGemsPoe2.SkillSlotCount) continue;
             _gems[(byte)slot] = (gem, Math.Max(1, level));
             if (SocketItem(gem) is { } change) _gemChanges.Add(change);
+        }
+        if (startingGem && _gems.Count == 0 && _gemTable.StartingGem(_objectType) is { } first && InstanceGemsPoe2.Skill(first, 1, 0) is { } skill)
+        {
+            _gems[0] = (first, 1);
+            if (SocketItem(first) is { } change) _gemChanges.Add(change);
+            _player = _player with { Skills = [.. (_player.Skills ?? []).Where(s => s.Id != skill.Id), skill] };
+            _onGems?.Invoke(EncodedGems());
         }
         if (startingUncutGem && _gems.Count == 0 && _gemTable.UncutFor(Poe2Gems.SkillKind, 1) is { } uncut
             && _itemTypesByHash.GetValueOrDefault(uncut.Hash) is { } type

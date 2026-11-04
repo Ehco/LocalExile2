@@ -2164,10 +2164,14 @@ Auth op `set_gems` (`Character.Gems`), `scripts/re/poe2/gems.py`,
   `0x142149510`, wave 21; not seen live) and the picker (`0x66` merge). Skill
   ids: `0x112` + slot. The gems are saved (`set_gems`, row | level << 16 |
   slot << 24) and come back as skills on entering. Supports and spirit gems
-  are refused (no socket model yet). A character with no gem gets an Uncut
-  Skill Gem (Level 1) in its inventory at each entry (ours; PoE2 drops the
-  first one at the Riverbank's boss). Kills drop uncut gems (4 %, the highest
-  tier the level reaches).
+  are refused (no socket model yet). **A new character starts with its class's
+  gem socketed**: Characters `StartSkillGem` (Rolling Slam for the Warrior
+  `StrFourb`, Spark `IntFourb`, Lightning Arrow `DexFour`, Whirling Slash
+  `DexFourb`, Unearth `IntFour`, Fragmentation Rounds `StrDexFourb`, Falling
+  Thunder `DexIntFourb`, Volcano `StrIntFourb`; the four `Four` Str classes
+  have unused ones), `gems.json`'s "starting"; a saved character without
+  gems gets it too, and it is saved. Kills drop uncut gems (4 %, the highest
+  tier the level reaches); `startingUncutGem` is a test knob only.
 - **`scripts/re/poe2/cs_sigs.py`**: the catalogue of every C→S message
   builder (callers of the send helper `0x14211fa00`, 514 sites): id, vtable,
   builder, the writer slot (the one that starts with `movzx ecx, word ptr

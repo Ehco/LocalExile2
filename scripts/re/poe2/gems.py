@@ -11,6 +11,8 @@ rows the Actor's skill record refers to (the effect's StatSet first, then its Ad
 gem's GemEffects is taken (the regular gem; the others are variants).
 "uncut": the uncut gems (UncutGems tiers and the other Metadata/Items/Gems/*Uncut* bases): id, row, name, HASH32, tier
 (the gem level the cut gem gets) and kind.
+"starting": each Characters row's StartSkillGem (the gem a new character of that class starts with: Rolling Slam for
+the Warrior, Spark for the Sorceress ...): the character Id (the class's object type) and the gem's BaseItemTypes row.
 
 The server grants a socketed gem's skill from this (Poe2Gems); the items themselves need data/poe2/item-types.json to
 hold the gems too (item_types.py). Files come from the Steam bundles through steamdump, cached in Tools/re/out/poe2.
@@ -71,11 +73,14 @@ def main():
             continue
         kind = "support" if "Support" in b["Id"] else ("spirit" if "Reservation" in b["Id"] else "skill")
         uncut.append({"id": b["Id"], "row": b["_row"], "name": b["Name"], "hash": b["HASH32"], "tier": tiers.get(b["_row"], 0), "kind": kind})
+    starting = [{"character": c["Id"], "gem": c["StartSkillGem"], "gemId": bases[c["StartSkillGem"]]["Id"]}
+                for c in dat.table("Characters") if c["StartSkillGem"] is not None]
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(OUT, "w", encoding="utf-8") as f:
         f.write('{"skills":[\n' + ",\n".join(" " + json.dumps(s, separators=(",", ":"), ensure_ascii=False) for s in skills)
-                + '\n],"uncut":[\n' + ",\n".join(" " + json.dumps(u, separators=(",", ":"), ensure_ascii=False) for u in uncut) + "\n]}\n")
-    print(f"{len(skills)} gems, {len(uncut)} uncut -> {OUT}", file=sys.stderr)
+                + '\n],"uncut":[\n' + ",\n".join(" " + json.dumps(u, separators=(",", ":"), ensure_ascii=False) for u in uncut)
+                + '\n],"starting":[\n' + ",\n".join(" " + json.dumps(s, separators=(",", ":")) for s in starting) + "\n]}\n")
+    print(f"{len(skills)} gems, {len(uncut)} uncut, {len(starting)} starting -> {OUT}", file=sys.stderr)
 
 
 if __name__ == "__main__":

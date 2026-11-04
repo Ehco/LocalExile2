@@ -151,7 +151,7 @@ partial class Program
                     gold: ticket.Gold == 0 ? Poe2StartingGold : ticket.Gold,
                     onProgress: (experience, gold) => _ = SavePoe2Progress(remote, opening.Ticket, experience, gold),
                     gems: ticket.Gems, onGems: gems => _ = SavePoe2Gems(remote, opening.Ticket, gems), gemTable: Poe2GemTable.Value,
-                    startingUncutGem: (ticket.Gems ?? []).Count == 0);
+                    startingGem: true);
                 if (Poe2GemTable.Value.Count == 0)
                     Console.WriteLine($"[gateway] {remote} no {Poe2Gems.DefaultPath}: no gem skills, no uncut gems (scripts/re/poe2/gems.py)");
                 var clock = Stopwatch.StartNew();

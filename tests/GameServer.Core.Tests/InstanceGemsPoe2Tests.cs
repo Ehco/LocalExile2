@@ -19,18 +19,20 @@ public class InstanceGemsPoe2Tests
         Poe2Gems.SkillKind, 1, 100, 0, 0, new Poe2Gems.Effect(175, "RollingSlamPlayer", 840600159, "rolling_slam", "Rolling Slam"),
         [new Poe2Gems.Level(1, 6113, [7797, 7837, 7877]), new Poe2Gems.Level(2, 6114, [7798, 7838, 7878])]);
     static readonly Poe2Gems.Uncut UncutOne = new("Metadata/Items/Gems/SkillGemUncut1", 4902, "Uncut Skill Gem (Level 1)", 1279452488, 1, Poe2Gems.SkillKind);
-    static readonly Poe2Gems Table = new([RollingSlam], [UncutOne]);
+    const string Warrior = "Metadata/Characters/Str/StrFourb";
+    static readonly Poe2Gems Table = new([RollingSlam], [UncutOne], new Dictionary<string, int> { [Warrior] = 589 });
 
     static readonly Poe2Items.ItemType UncutType = new(UncutOne.Id, UncutOne.Row, UncutOne.Name, UncutOne.Hash, 1, 1, 1, 16301, ["Base", "Usable", "Stack"], 1);
     static readonly Poe2Items.ItemType GemType = new(RollingSlam.Id, RollingSlam.Row, RollingSlam.Name, RollingSlam.Hash, 1, 1, 1, 9450, ["Base", "SkillGem", "Quality", "Sockets"]);
     static readonly IReadOnlyDictionary<string, Poe2Items.ItemType> Types = new Dictionary<string, Poe2Items.ItemType> { [UncutType.Id] = UncutType, [GemType.Id] = GemType };
 
-    static InstanceSessionPoe2 InWorld(IEnumerable<int>? gems = null, List<IReadOnlyCollection<int>>? saved = null, bool startingUncut = true)
+    static InstanceSessionPoe2 InWorld(IEnumerable<int>? gems = null, List<IReadOnlyCollection<int>>? saved = null, bool startingUncut = true,
+        string objectType = InstanceSessionPoe2.DefaultObjectType, bool startingGem = false)
     {
         var player = new PlayerObjectPoe2(GridX: 200, GridY: 200, Life: 58, Mana: 48, ClassRow: 6,
             Skills: [.. WarriorSkills, .. InstanceGemsPoe2.Skills(Table, gems ?? [])]);
-        var session = new InstanceSessionPoe2(player, itemTypes: Types, gems: gems, onGems: saved is null ? null : saved.Add,
-            gemTable: Table, startingUncutGem: startingUncut);
+        var session = new InstanceSessionPoe2(player, objectType: objectType, itemTypes: Types, gems: gems, onGems: saved is null ? null : saved.Add,
+            gemTable: Table, startingGem: startingGem, startingUncutGem: startingUncut);
         session.Handle(AreaGenerated, 0);
         return session;
     }
@@ -76,6 +78,24 @@ public class InstanceGemsPoe2Tests
         ActorSkillsPoe2.WriteList(list, skills);
         Assert.Equal(InstanceProgressionPoe2.ComponentUpdate(Player, InstanceGemsPoe2.ActorComponent, list.ToArray()), m);
         Assert.Equal("02F9", Convert.ToHexString(m, 0, 2));
+    }
+
+    [Fact]
+    public void A_new_character_starts_with_its_class_gem_socketed()
+    {
+        var saved = new List<IReadOnlyCollection<int>>();
+        var session = InWorld(saved: saved, startingUncut: false, objectType: Warrior, startingGem: true);
+
+        var entering = session.EnterWorld();
+
+        Assert.Equal(RollingSlam.Hash, Assert.Single(session.SkillSlots).Item.TypeHash);
+        Assert.Equal([Poe2Gems.Encode(589, 1, 0)], session.Gems);
+        Assert.Equal([Poe2Gems.Encode(589, 1, 0)], Assert.Single(saved));
+        Assert.Empty(session.MainInventory);
+        var picker = entering.Single(m => Convert.ToHexString(m, 0, 2) == "0066");
+        Assert.Contains(InstanceGemsPoe2.FirstGemSkillId.ToString("X8"), Convert.ToHexString(picker));
+        Assert.Null(Table.StartingGem(InstanceSessionPoe2.DefaultObjectType));
+        Assert.Empty(InWorld(startingUncut: false, startingGem: true).SkillSlots);   // a class without a starting gem
     }
 
     [Fact]
@@ -153,6 +173,8 @@ public class InstanceGemsPoe2Tests
              {"id":"Metadata/Items/Gems/SkillGemRollingSlam","row":589,"name":"Rolling Slam","hash":984173153,"skillGemsRow":440,"gemEffectsRow":204,"colour":1,"kind":"skill","gemType":0,"minLevel":1,"strength":100,"dexterity":0,"intelligence":0,"tags":[9,24],"effect":{"row":175,"id":"RollingSlamPlayer","hash":840600159,"activeSkill":"rolling_slam","skillName":"Rolling Slam"},"levels":[[1,6113,[7797,7837,7877]]]}
             ],"uncut":[
              {"id":"Metadata/Items/Gems/SkillGemUncut1","row":4902,"name":"Uncut Skill Gem (Level 1)","hash":1279452488,"tier":1,"kind":"skill"}
+            ],"starting":[
+             {"character":"Metadata/Characters/Str/StrFourb","gem":589,"gemId":"Metadata/Items/Gems/SkillGemRollingSlam"}
             ]}
             """);
         try
@@ -165,6 +187,7 @@ public class InstanceGemsPoe2Tests
             Assert.Equal([new Poe2Gems.Level(1, 6113, [7797u, 7837u, 7877u]) with { StatSetRows = gem.Levels[0].StatSetRows }], gem.Levels);
             Assert.Equal([7797u, 7837u, 7877u], gem.Levels[0].StatSetRows);
             Assert.Equal(UncutOne, Assert.Single(table.UncutGems));
+            Assert.Equal(589, table.StartingGem(Warrior)!.Row);
         }
         finally { File.Delete(path); }
         Assert.Equal(0, Poe2Gems.Load(path).Count);
