@@ -34,9 +34,10 @@ def fetch(paths):
     if not todo:
         return
     os.makedirs(CACHE, exist_ok=True)
-    # Batches: Windows refuses a command line over 32 k characters (the gems' .it files are 600+ paths).
-    for i in range(0, len(todo), 60):
-        cmd = ["dotnet", "run", "--project", os.path.join(HERE, "steamdump"), "-c", "Release", "--", BUNDLES, CACHE] + todo[i:i + 60]
+    # Batches: Windows refuses a command line over 32 k characters (the equipment's .it files are 2000+ paths of ~70
+    # characters); each batch is one steamdump run, which loads the bundle index again.
+    for i in range(0, len(todo), 300):
+        cmd = ["dotnet", "run", "--project", os.path.join(HERE, "steamdump"), "-c", "Release", "--", BUNDLES, CACHE] + todo[i:i + 300]
         r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
         if r.returncode:
             raise SystemExit(f"steamdump failed ({r.returncode}): {r.stdout[-2000:]}{r.stderr[-2000:]}")

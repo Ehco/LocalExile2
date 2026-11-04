@@ -2259,3 +2259,39 @@ Written without a live test. Code: `InstanceFlasksPoe2.cs`,
 To check live: the id and its two fields; whether the client expects the
 Charges component as PoE1's signed compact (the item would not parse
 otherwise) and shows the recovery; the flask bar's slots (PoE2 shows two).
+
+## Wave 33 — equipment drops (2026-11-05)
+
+Written without a live test. Code: `Poe2Items.RollGear` / `IsGearBase` /
+`ArmourValues`, `InstanceSessionPoe2.Loot.cs`, `item_types.py` (the
+equipment).
+
+- **The bases.** `item_types.py` now covers `Metadata/Items/Weapons/`,
+  `Armours/`, `Rings/`, `Amulets/`, `Belts/` and `Quivers/` (3612 item types
+  in all) with every weapon's WeaponTypes values and WieldableClasses row and
+  every armour's ArmourTypes values (`armour`, `evasion`, `energyShield`), the
+  item class and its name. PoE2's own bases are the "Four…" files
+  (FourOneHandMace1 Wooden Club, FourBodyStr1 Rusted Cuirass, FourBow1 Crude
+  Bow ...); the others under the same folders are PoE1's, dev items
+  (Keyblade) or skill-made ones (Energy Blade), so `IsGearBase` keeps the
+  "Four" ones.
+- **The drop** is ours, not PoE2's: 12 % per kill, one base among those whose
+  DropLevel the monster's level reaches, each as likely, normal rarity, item
+  level the monster's, level requirement the base's. It goes out as the
+  currency does (a WorldItem, the item data from the base's .it chain: Base,
+  Mods, Weapon or Armour, Sockets ...; the Armour component's u8 roll is 0),
+  is picked up into the inventory at its grid size, moved and saved like the
+  rest.
+- **Not done:** mods (magic and rare items): `dat.py` cannot read PoE2's
+  `Mods.datc64` with the schema it has (rows are 693 bytes, the schema 661:
+  the four "StatNValue" i32 columns at +126 are really min/max pairs, Stat1
+  5–8 for Strength1, so Stat3/Stat4's ranges add 16 bytes and the spawn
+  weight tags sit at +158, not +142; 16 more bytes are missing further on),
+  so every drop is white; **equipping** (a move into Weapon1, Body
+  Armour ...) is refused by wave 31's rule: it needs the model's Inventories
+  component update, the weapon records (`0x324`) and the attack's values
+  again, which are the next step; attribute requirements are not checked.
+
+To check live: a dropped armour's look on the ground and in the inventory
+(the Armour component), a weapon's tooltip values, the inventory after a
+relog with gear in it.

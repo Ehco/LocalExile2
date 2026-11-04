@@ -17,7 +17,10 @@ public static class Poe2Items
     public sealed record ItemType(string Id, int Row, string Name, uint Hash, byte Width, byte Height, int DropLevel,
         ushort VisualIdentity, string[] Components, int MaxStack = 1, int? ItemClass = null, byte? Stance = null,
         WeaponValues? Weapon = null, int[]? StartingClasses = null, BasicAttack? Attack = null,
-        int? Wieldable = null, FlaskValues? Flask = null);
+        int? Wieldable = null, FlaskValues? Flask = null, ArmourValues? Armour = null, string? ClassName = null);
+
+    /// <summary>ArmourTypes: an armour's base defences (wave 33).</summary>
+    public sealed record ArmourValues(int Armour, int Evasion, int EnergyShield);
 
     /// <summary>Flasks.datc64 and ComponentCharges.datc64 (wave 32): the flask's type (1 life, 2 mana), what a use
     /// recovers over <paramref name="RecoveryTenths"/> tenths of a second, the charges it holds and a use's cost.</summary>
@@ -94,6 +97,27 @@ public static class Poe2Items
         if (!types.TryGetValue(GoldCoin, out var gold) || random.Next(100) >= GoldDropChance) return null;
         int level = Math.Max(1, monsterLevel);
         return Create(gold, random.Next(GoldBaseMinimum + GoldPerLevelMinimum * level, GoldBaseMaximum + GoldPerLevelMaximum * level + 1));
+    }
+
+    /// <summary>The chance (percent) that a normal monster drops a piece of equipment: our own number (wave 33).</summary>
+    public const int GearDropChance = 12;
+
+    /// <summary>The equipment bases that may drop: PoE2's own bases (their file names start with "Four", as
+    /// FourOneHandMace1; the rest are PoE1's, dev items and skill-made ones), weapons, armours and jewellery.</summary>
+    public static bool IsGearBase(ItemType type) =>
+        type.Id.Contains("/Four", StringComparison.Ordinal)
+        && (type.Weapon is not null || type.Armour is not null
+            || type.Id.StartsWith("Metadata/Items/Rings/") || type.Id.StartsWith("Metadata/Items/Amulets/") || type.Id.StartsWith("Metadata/Items/Belts/"));
+
+    /// <summary>A kill's piece of equipment, or null: with <see cref="GearDropChance"/>, one base among those the
+    /// monster's level reaches (DropLevel), each as likely; normal rarity, item level the monster's. Mods come later.</summary>
+    public static Item? RollGear(IReadOnlyDictionary<string, ItemType> types, int monsterLevel, Random random)
+    {
+        if (random.Next(100) >= GearDropChance) return null;
+        var bases = types.Values.Where(t => IsGearBase(t) && t.DropLevel <= Math.Max(1, monsterLevel)).OrderBy(t => t.Row).ToList();
+        if (bases.Count == 0) return null;
+        var type = bases[random.Next(bases.Count)];
+        return Create(type) with { ItemLevel = (byte)Math.Clamp(monsterLevel, 1, 100), RequiredLevel = type.DropLevel };
     }
 
     /// <summary>The chance (percent) that a normal monster drops an uncut skill gem: our own number (wave 30).</summary>

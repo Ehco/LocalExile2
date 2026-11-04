@@ -4,7 +4,8 @@ data needs.
     python scripts/re/poe2/item_types.py
 
 - The types: every BaseItemTypes row under Metadata/Items/Currency/, Metadata/Items/Gems/ and Metadata/Items/Gem/ (the gems,
-  wave 30) and Metadata/Items/Flasks/ (the flasks, wave 32) with a name players see (not "[DNT]").
+  wave 30) and Metadata/Items/Flasks/ (the flasks, wave 32), Metadata/Items/Weapons/, Armours/, Rings/, Amulets/, Belts/ and Quivers/ (the
+  equipment, wave 33) with a name players see (not "[DNT]" or another bracketed name).
 - hash: the row's HASH32, the item data's first u32 (the reader 0x1421ecfc0 looks the type up by it).
 - visualIdentity: the ItemVisualIdentity row's HASH16, the Base component's first u16 (0x1425a0e50).
 - components: the .it chain merged as ot_components.merge_items does for PoE1 (parent-first, nothing first, "client"
@@ -36,6 +37,9 @@ PREFIX = "Metadata/Items/Currency/"
 GEM_PREFIXES = ("Metadata/Items/Gems/", "Metadata/Items/Gem/")
 # The flasks (wave 32): life and mana flasks, with Flasks.datc64 and ComponentCharges.datc64 values.
 FLASK_PREFIX = "Metadata/Items/Flasks/"
+# The equipment (wave 33): weapons, armours and jewellery, with WeaponTypes and ArmourTypes values.
+GEAR_PREFIXES = ("Metadata/Items/Weapons/", "Metadata/Items/Armours/", "Metadata/Items/Rings/", "Metadata/Items/Amulets/",
+                 "Metadata/Items/Belts/", "Metadata/Items/Quivers/")
 
 
 def load(types):
@@ -90,6 +94,26 @@ def starting_weapons(bases):
     return out
 
 
+def gear_values(bases):
+    """Extra fields of every weapon and armour, by BaseItemTypes row: the item class, the WeaponTypes values and the
+    WieldableClasses row for a weapon, the ArmourTypes values for an armour (wave 33)."""
+    classes = dat.table("ItemClasses")
+    wieldable = {r["ItemClass"]: r["_row"] for r in dat.table("WieldableClasses")}
+    out = {}
+    for w in dat.table("WeaponTypes"):
+        row = w["BaseItemType"]
+        out[row] = {"itemClass": bases[row]["ItemClass"], "wieldable": wieldable.get(bases[row]["ItemClass"]),
+                    "weapon": {"minimumDamage": w["DamageMin"], "maximumDamage": w["DamageMax"], "attackMs": w["Speed"],
+                               "range": w["RangeMax"], "critical": w["CritChance"]}}
+    for a in dat.table("ArmourTypes"):
+        row = a["BaseItemType"]
+        out[row] = {"itemClass": bases[row]["ItemClass"],
+                    "armour": {"armour": a["Armour"], "evasion": a["Evasion"], "energyShield": a["EnergyShield"]}}
+    for row in out:
+        out[row]["className"] = classes[bases[row]["ItemClass"]]["Id"]
+    return out
+
+
 def flask_values():
     """Extra fields of the flasks, by BaseItemTypes row: Flasks (life / mana per use, the recovery time in tenths of a
     second) and ComponentCharges (the charges and what a use costs)."""
@@ -108,8 +132,9 @@ def flask_values():
 def main():
     bases = dat.table("BaseItemTypes")
     starts = starting_weapons(bases)
-    rows = [r for r in bases if r["Id"].startswith((PREFIX, *GEM_PREFIXES, FLASK_PREFIX)) and r["Name"] and not r["Name"].startswith("[DNT]")]
+    rows = [r for r in bases if r["Id"].startswith((PREFIX, *GEM_PREFIXES, FLASK_PREFIX, *GEAR_PREFIXES)) and r["Name"] and not r["Name"].startswith("[")]
     flasks = flask_values()
+    gear = gear_values(bases)
     rows += [bases[row] for row in sorted(starts)]
     visuals = dat.table("ItemVisualIdentity")
     stacks = {r["BaseItemType"]: r["StackSize"] for r in dat.table("CurrencyItems") if r["BaseItemType"] is not None}
@@ -129,7 +154,7 @@ def main():
                     "height": r["Height"], "dropLevel": r["DropLevel"],
                     "visualIdentity": visuals[visual]["HASH16"] if visual is not None else 0,
                     "components": m["components"][:m["read"]], "maxStack": stacks.get(r["_row"], 1),
-                    **starts.get(r["_row"], {}), **flasks.get(r["_row"], {})})
+                    **gear.get(r["_row"], {}), **starts.get(r["_row"], {}), **flasks.get(r["_row"], {})})
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(OUT, "w", encoding="utf-8") as f:
         f.write("[\n" + ",\n".join(" " + json.dumps(r, separators=(",", ":")) for r in out) + "\n]\n")

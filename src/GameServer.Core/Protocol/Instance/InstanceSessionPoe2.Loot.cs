@@ -54,17 +54,18 @@ public sealed partial class InstanceSessionPoe2
     }
 
     // A kill's drops where the monster fell, each a WorldItem object (S→C 0x2f7): a currency item (Poe2Items.Roll), a
-    // gold pile (Poe2Items.RollGold; wave 29) and an uncut gem (RollUncutGem; wave 30), rolled in that order on the
-    // session's generator.
+    // gold pile (Poe2Items.RollGold; wave 29), an uncut gem (RollUncutGem; wave 30) and a piece of equipment (RollGear;
+    // wave 33), rolled in that order on the session's generator.
     private IEnumerable<byte[]> DropLoot(int monster, double now)
     {
         int level = _monsters[monster].Level;
         var item = Poe2Items.Roll(_itemTypes, level, _random);
         var gold = Poe2Items.RollGold(_itemTypes, level, _random);
         var uncut = Poe2Items.RollUncutGem(_itemTypes, _gemTable, level, _random);
-        if (item is null && gold is null && uncut is null) yield break;
+        var gear = Poe2Items.RollGear(_itemTypes, level, _random);
+        if (item is null && gold is null && uncut is null && gear is null) yield break;
         var at = MonsterCell(monster, now);
-        foreach (var drop in new[] { item, gold, uncut })
+        foreach (var drop in new[] { item, gold, uncut, gear })
         {
             if (drop is null) continue;
             var ground = new WorldItemObjectPoe2(at.X, at.Y, drop);

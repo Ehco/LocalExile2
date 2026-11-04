@@ -66,6 +66,57 @@ public class LootPoe2Tests
         Assert.Equal([(session.Experience, session.Gold)], progress);
     }
 
+    static readonly Poe2Items.ItemType Club = new("Metadata/Items/Weapons/OneHandWeapons/OneHandMaces/FourOneHandMace1", 2040, "Wooden Club",
+        0x2a2a2a2a, 1, 3, 1, 4001, ["Base", "Mods", "Weapon", "Sockets"], Weapon: new(6, 10, 1450, 11, 500), ClassName: "One Hand Mace");
+    static readonly Poe2Items.ItemType Cuirass = new("Metadata/Items/Armours/BodyArmours/FourBodyStr1", 2259, "Rusted Cuirass",
+        0x2b2b2b2b, 2, 3, 1, 4002, ["Base", "Mods", "Armour", "Sockets"], Armour: new(32, 0, 0), ClassName: "Body Armour");
+    static readonly Poe2Items.ItemType Hammer = new("Metadata/Items/Weapons/OneHandWeapons/OneHandMaces/FourOneHandMace2", 2041, "Smithing Hammer",
+        0x2c2c2c2c, 1, 3, 4, 4003, ["Base", "Mods", "Weapon", "Sockets"], Weapon: new(10, 16, 1450, 11, 500), ClassName: "One Hand Mace");
+    static readonly Poe2Items.ItemType Keyblade = new("Metadata/Items/Weapons/TwoHandWeapons/TwoHandSwords/TwoHandSwordDev", 368, "Keyblade",
+        0x2d2d2d2d, 2, 4, 1, 4004, ["Base", "Mods", "Weapon", "Sockets"], Weapon: new(1, 1, 833, 16, 500), ClassName: "Two Hand Sword");
+    static readonly IReadOnlyDictionary<string, Poe2Items.ItemType> Gear = new Dictionary<string, Poe2Items.ItemType>
+        { [Club.Id] = Club, [Cuirass.Id] = Cuirass, [Hammer.Id] = Hammer, [Keyblade.Id] = Keyblade, [Wisdom.Id] = Wisdom };
+
+    [Fact]
+    public void A_piece_of_equipment_is_a_poe2_base_the_monsters_level_reaches()
+    {
+        var drops = Enumerable.Range(0, 300).Select(seed => Poe2Items.RollGear(Gear, 2, new Random(seed))).Where(d => d is not null).ToList();
+
+        Assert.InRange(drops.Count, 15, 60);
+        Assert.All(drops, d => Assert.Contains(d!.TypeHash, new[] { Club.Hash, Cuirass.Hash }));   // not the level 4 hammer, not the dev blade
+        Assert.All(drops, d => Assert.Equal(2, d!.ItemLevel));
+        Assert.Contains(drops, d => d!.TypeHash == Cuirass.Hash);
+        Assert.Contains(Enumerable.Range(0, 300).Select(seed => Poe2Items.RollGear(Gear, 5, new Random(seed))), d => d?.TypeHash == Hammer.Hash);
+        Assert.False(Poe2Items.IsGearBase(Keyblade));
+        Assert.False(Poe2Items.IsGearBase(Wisdom));
+    }
+
+    [Fact]
+    public void A_dropped_armour_takes_its_cells_in_the_inventory_when_picked_up()
+    {
+        var zombie = new Poe2Monster("Metadata/Monsters/Zombies/CourtGuardZombieUnarmed", 1736, 2,
+            new MonsterObjectPoe2(210, 200, 1, MonsterObjectPoe2.BaseComponents));
+        InstanceSessionPoe2? session = null; uint id = 0; WorldItemObjectPoe2? ground = null;
+        for (int seed = 0; seed < 200 && ground is null; seed++)
+        {
+            session = new InstanceSessionPoe2(new PlayerObjectPoe2(GridX: 200, GridY: 200, Life: 58, Skills: WarriorSkills),
+                monsters: [zombie], random: new Random(seed), itemTypes: new Dictionary<string, Poe2Items.ItemType> { [Cuirass.Id] = Cuirass });
+            session.Handle(AreaGenerated, 0);
+            session.Handle(PunchZombie, 0);
+            session.Tick(1);
+            foreach (var (i, g) in session.GroundItems)
+                if (g.Item.TypeHash == Cuirass.Hash) (id, ground) = (i, g);
+        }
+        Assert.NotNull(ground);
+
+        session!.Handle(Pick(id), 2);
+        session.Tick(3);
+
+        var entry = Assert.Single(session.MainInventory);
+        Assert.Equal((Cuirass.Hash, (byte)2, (byte)3), (entry.Item.TypeHash, entry.Width, entry.Height));
+        Assert.Equal(2, entry.Item.ItemLevel);
+    }
+
     // One zombie (life 1, level 2) at (210, 200) that does not fight back; Scroll of Wisdom is the only drop.
     static InstanceSessionPoe2 InWorld(int seed)
     {
