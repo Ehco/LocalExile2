@@ -4,7 +4,7 @@ Read this first if you are picking up the PoE2 work. It covers where things stan
 from nothing, how to run a live test, and what to do next. The wave-by-wave findings (addresses, message layouts,
 live results) are in [PORTING-POE2.md](PORTING-POE2.md). This file points into it and does not repeat it.
 
-Last updated 2026-11-04, after wave 24.
+Last updated 2026-11-04, after wave 25.
 
 ## Where it stands
 
@@ -34,8 +34,9 @@ At 0 life the player dies, gets the death screen and can resurrect at the area's
 | Hits, monster death | Punch hits land after the approach (`0x1cf` life, `0x1d3` stats); monster life from DefaultMonsterStats × LifeMultiplier; death at 0. No loot, no action hit `0x1fb` | `InstanceCombatPoe2.cs`, `InstanceSessionPoe2.cs`, `Poe2Monsters.cs`; wave 22 |
 | Monster AI, player death | Aggro, chase (MoveTo `0x1e0`, no pathing), swings (`0x1c8`) and hits on the player; the death screen `0x6d`, resurrect C→S `0x6c` (teleport `0x1dd`) | `InstanceSessionPoe2.Monsters.cs`, `Poe2Monsters.AttackOf`; wave 23 |
 | Experience, levels | A kill's experience in the Player component (`0x2f9`); a new level raises and refills life and mana and is saved to Auth. The experience into a level is not saved | `InstanceSessionPoe2.Experience.cs`, `InstanceProgressionPoe2.cs`, `scripts/re/poe2/experience_levels.py`; wave 24 |
+| Drops, pickup | A kill may drop currency on the ground (`0x2f7` WorldItem, 35 % or `Game_POE2_DROP_CHANCE`); a click walks to it and puts it in the main inventory (`0x2fa`, `0xde`). The inventory is not saved | `InstanceSessionPoe2.Loot.cs`, `Poe2Inventory.cs`, `Poe2Items.cs`, `scripts/re/poe2/item_types.py`; wave 25 |
 
-**Tests.** 629/629 pass:
+**Tests.** 635/635 pass:
 
 ```bash
 dotnet test tests/GameServer.Core.Tests -c Release
@@ -134,6 +135,10 @@ Once per machine. Everything generated here lives in `data/`, which git ignores.
 8. **Experience levels.** Without `data/tables/ExperienceLevels.json` the player stays level 1 and kills give nothing:
    ```bash
    python scripts/re/poe2/experience_levels.py
+   ```
+9. **Item types.** Without `data/poe2/item-types.json` monsters drop nothing:
+   ```bash
+   python scripts/re/poe2/item_types.py
    ```
 
 ## Running a live test
@@ -302,4 +307,5 @@ In rough order. Each is a wave of its own.
 | 21 | Skills, the skill bar, a targeted attack | `c28161f` |
 | 22 | Hits and monster death | `b4171db` |
 | 23 | Monster AI, the player's death | `85da914` |
-| 24 | Experience | the commit after `85da914` |
+| 24 | Experience | `7553177` |
+| 25 | Monster drops, the pickup | the commit after `7553177` |

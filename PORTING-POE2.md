@@ -1605,3 +1605,66 @@ Limits:
 - The experience into a level is lost when the player leaves the area or logs
   out.
 - No rarity, no party share, no PoE2 death penalty.
+
+## Wave 25 — monster drops and the pickup (2026-11-04)
+
+A kill can drop a currency item where the monster fell; a click on its label walks
+the player there and puts it in the main inventory. Code:
+`InstanceSessionPoe2.Loot.cs`, `WorldItemObjectPoe2.cs`, `Poe2Inventory.cs`,
+`Poe2Items.cs`, `scripts/re/poe2/item_types.py`.
+
+- **The item data is PoE1's** (reader `0x1421ecfc0`, wire `0x1421ecef0`):
+  - u32 type HASH32, u16 flags (bit 9 → one u64), then each component's data
+    through its vtable `+0x28`, in the .it chain's order;
+  - on the wire: u16 big-endian length, then that.
+  - Base (vtable `0x1435736b0`, read `0x1425a0e50`, as PoE1): u16 visual
+    HASH16, u8, u8 (`+0xc7` corrupted), u16 flags, u8; the rest hangs on flags.
+  - Usable (vtable `0x143573580`): its read is `ret`, no data.
+  - Stack (vtable `0x143574c88`, read `0x1425cd230`): u16 LE count.
+  - Currency is Base, Usable, Stack (Item → AbstractCurrency →
+    StackableCurrency).
+- **The item types**: `scripts/re/poe2/item_types.py` writes
+  `data/poe2/item-types.json`: the 568 currency rows players see, with HASH32,
+  grid size, drop level, ItemVisualIdentity HASH16, components and CurrencyItems
+  stack size. Scroll of Wisdom is `AF0B8850`, visual 2083, stack 40.
+- **The ground item** is `Metadata/MiscellaneousObjects/WorldItem`, created with
+  `0x2f7`:
+  - .ot: Positioned, BaseEvents, Animated, WorldItem, InteractionAction (+ client
+    Render, Targetable);
+  - Positioned is the PoE2 player's (17 bytes); object flags `0x02` put it in the
+    wake zone, as the exits;
+  - WorldItem (vtable `0x1434d86b8`, read `0x141e02860`): u32 (non-zero → one
+    more u32), u8 flags, u32 visual override (0: the item's), then the item data.
+- **The drop** is our own rule, not PoE2's: 35 % per kill
+  (`Game_POE2_DROP_CHANCE`, 0–100), then Scroll of Wisdom 60, Orb of
+  Transmutation 25, Orb of Augmentation 15 among those whose drop level the
+  monster reaches.
+- **The pickup click** is a skill use, C→S `0x1a5`:
+  - skill `0x2000C266`, flags `0x0400`, options `08`, the item's entity id as
+    target, then x, y;
+  - live: `01A5 00 2000C266 0400 FF 08 00001007 00000483 00000519`.
+  - The server echoes it at once (`0x1c8`, as PoE1's server does), the client
+    walks, and on arrival (2 cells away by the walk estimate) the server sends
+    the removal and the inventory change. A move cancels it.
+- **Remove object: S→C `0x2fa`**, the object header only (read `0x141f4b800`;
+  PoE1's `0x2bb`).
+- **Inventory change: S→C `0xde`** (read `0x142158b20`, body `0x1427174f0`):
+  - u8 route, u8 manager, u32 inventory id, u32 revision;
+  - u32 count + the removed item ids;
+  - u32 count + per added item (`0x1425aae20`): u32 id, u8 x, u8 y, wire item;
+  - u8 flag.
+  - The main inventory is id 1, 12 × 5. Revisions start at 1.
+  - Stacks of the same type grow first: a grown stack is removed and added
+    again under a new id. With no room the item stays on the ground.
+
+**Live test (2026-11-04).** With `Game_POE2_DROP_CHANCE=100` a Rotting Guard
+dropped a Scroll of Wisdom with its label. A click on it: the server sent
+`0x2fa` and `0xde`, the label went away, and the inventory showed the scroll at
+the first cell, "Stack Size: 1/40". An Orb of Augmentation's label and tooltip
+("Stack Size: 1/30") were checked earlier.
+
+Limits:
+- The inventory lives in the session: it is lost on leaving the area or
+  logging out, and not in the save database.
+- Only currency drops. No gold (it needs its own counter), no rarity, no
+  equipment, no moving items in the inventory, no dropping them.

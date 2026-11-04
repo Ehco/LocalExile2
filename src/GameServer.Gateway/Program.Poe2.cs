@@ -125,7 +125,8 @@ partial class Program
                     Name: ticket.Character, ClassRow: row.Index, Experience: CharacterStats.ExperienceFor(ticket.Level),
                     Skills: Poe2StartingSkills.For(row)),
                     objectType: row.ObjectType, walkable: walkable, exits: exits, monsters: monsters,
-                    levelStarts: CharacterStats.LevelStarts, onLevel: level => _ = SavePoe2Level(remote, opening.Ticket, level));
+                    levelStarts: CharacterStats.LevelStarts, onLevel: level => _ = SavePoe2Level(remote, opening.Ticket, level),
+                    itemTypes: Poe2ItemTypes.Value);
                 var clock = Stopwatch.StartNew();
                 double? leavingSince = null;
                 bool transferred = false;
@@ -244,6 +245,12 @@ partial class Program
 
     static readonly Lazy<IReadOnlyDictionary<string, Poe2Monsters.Variety>> Poe2Varieties = new(() => Poe2Monsters.Load());
     static readonly Lazy<IReadOnlyList<Poe2Monsters.LevelStats>> Poe2MonsterLevels = new(() => Poe2Monsters.LoadLevels());
+    // Without data/poe2/item-types.json (scripts/re/poe2/item_types.py) monsters drop nothing.
+    static readonly Lazy<IReadOnlyDictionary<string, Poe2Items.ItemType>> Poe2ItemTypes = new(() =>
+    {
+        if (int.TryParse(Environment.GetEnvironmentVariable("Game_POE2_DROP_CHANCE"), out int chance)) Poe2Items.DropChance = chance;
+        return Poe2Items.Load();
+    });
 
     // The monsters the area's capture places, of the varieties in data/poe2/monster-varieties.json.
     static IReadOnlyList<Poe2Monster> Poe2AreaMonsters(string remote, ushort hash, IReadOnlyList<Poe2Areas.PlacedObject> objects)

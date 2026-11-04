@@ -171,6 +171,11 @@ public static class InstanceProtocolPoe2
     /// 0x24) the object becomes the local player (event 0xe794fcda). The handler only runs while the world is active
     /// (+0x84a); before that the client queues the message (+0x6b0).
     /// </summary>
+    public const ushort RemoveObjectId = 0x2fa;
+
+    /// <summary>S→C 0x2fa (world group, read 0x141f4b800: the object header only): PoE1's remove object 0x2bb.</summary>
+    public static byte[] RemoveObject(uint entityId) => new LoginWriter().U16(RemoveObjectId).U32(entityId).U32(0).U8(0).U16(0).ToArray();
+
     public static byte[] CreateObject(uint entityId, uint objectType, ReadOnlySpan<byte> blob)
     {
         var w = new LoginWriter().U16(CreateObjectId).U32(entityId).U32(0).U8(0).U16(0).U32(objectType);

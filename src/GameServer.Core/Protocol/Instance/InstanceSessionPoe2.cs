@@ -51,10 +51,12 @@ public sealed partial class InstanceSessionPoe2
     /// <param name="levelStarts">Each level's starting experience (ExperienceLevels, index = level − 1); without it the
     /// player stays level 1.</param>
     /// <param name="onLevel">Called with the new level when a kill levels the player up (under the session's lock).</param>
+    /// <param name="itemTypes">The item types monsters drop (<see cref="Poe2Items"/>); without them nothing drops.</param>
     public InstanceSessionPoe2(PlayerObjectPoe2 player, string objectType = DefaultObjectType, uint playerId = DefaultPlayerId,
         double walkSpeed = DirectionWalk.DefaultSpeed, Func<int, int, bool>? walkable = null,
         IReadOnlyList<AreaTransitionObjectPoe2>? exits = null, IReadOnlyList<Poe2Monster>? monsters = null,
-        Random? random = null, IReadOnlyList<uint>? levelStarts = null, Action<int>? onLevel = null)
+        Random? random = null, IReadOnlyList<uint>? levelStarts = null, Action<int>? onLevel = null,
+        IReadOnlyDictionary<string, Poe2Items.ItemType>? itemTypes = null)
     {
         (_player, _objectType, PlayerId, _exits, _monsters) = (player, objectType, playerId, exits ?? [], monsters ?? []);
         Walk = new DirectionWalk(player.GridX, player.GridY, walkSpeed, walkable);
@@ -62,6 +64,7 @@ public sealed partial class InstanceSessionPoe2
         _monsterLife = [.. _monsters.Select(m => (int)m.Object.Life)];
         _random = random ?? Random.Shared;
         InitExperience(levelStarts, onLevel);
+        InitLoot(itemTypes);
         InitMonsters();
     }
 
@@ -120,11 +123,14 @@ public sealed partial class InstanceSessionPoe2
             // A move ends the attack in progress (the client drops its action). Outside lockstep the client reports its
             // own cell: start from it instead of the estimate.
             CancelAttack(now);
+            CancelPickup(now);
             if (move.X != 0 || move.Y != 0) Walk.Place(move.X, move.Y, now);
             var (x, y) = Walk.Turn(move.Dx, move.Dy, now);
             return [InstanceMovementPoe2.DirectionMoveEcho(PlayerId, move.Dx, move.Dy, x, y, move.Flag != 0)];
         }
         if (InWorld && InstanceProtocolPoe2.ReadSetSkillSlot(message) is { } bind) return BindSlot(bind.Slot, bind.SkillId);
+        if (InWorld && InstanceSkillsPoe2.ReadUseSkill(message, out _) is { TargetId: { } item } pick && _groundItems.ContainsKey(item))
+            return BeginPickup(item, pick, now);
         if (InWorld && InstanceSkillsPoe2.ReadUseSkill(message, out _) is { TargetId: { } target } use &&
             _player.Skills?.FirstOrDefault(s => s.Id == use.SkillId) is { } skill)
         {
@@ -208,7 +214,7 @@ public sealed partial class InstanceSessionPoe2
             yield return InstanceCombatPoe2.StatsUpdate(MonsterId(a.Monster), [(InstanceCombatPoe2.HideMiniLifeBar, 1)]);
         yield return InstanceCombatPoe2.LifeUpdate(MonsterId(a.Monster), _monsterLife[a.Monster]);
         if (_monsterLife[a.Monster] == 0)
-            foreach (var m in GainExperience(a.Monster)) yield return m;
+            foreach (var m in GainExperience(a.Monster).Concat(DropLoot(a.Monster, now))) yield return m;
     }
 
     // Skill bar: slot → skill id, as the client set it (C→S 0x5c).
@@ -231,7 +237,7 @@ public sealed partial class InstanceSessionPoe2
     private IEnumerable<uint> SkillIds => (_player.Skills ?? []).Select(s => s.Id);
 
     /// <summary>The server's per-frame work at <paramref name="now"/>: the hit of an attack when it lands (0x1cf, and the
-    /// kill's experience 0x2f9), the monsters' chases, attacks and hits (0x1c8, 0x1cf on the player), and the change area (0x2f1) when the walk reaches
+    /// kill's experience 0x2f9 and drop 0x2f7), the monsters' chases, attacks and hits (0x1c8, 0x1cf on the player), and the change area (0x2f1) when the walk reaches
     /// an exit. Empty otherwise, and after the player has left.</summary>
     public IReadOnlyList<byte[]> Tick(double now)
     {
@@ -239,6 +245,7 @@ public sealed partial class InstanceSessionPoe2
         {
             if (!InWorld || LeavingBy is not null) return [];
             var sent = AttackTick(now).ToList();
+            sent.AddRange(PickupTick(now));
             sent.AddRange(MonsterTick(now));
             if (ExitTick(now) is { } change) sent.Add(change);
             return sent;

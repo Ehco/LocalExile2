@@ -5,7 +5,7 @@ namespace GameServer.Core.Protocol.Instance;
 /// <summary>PoE2 inventories (PORTING-POE2.md, wave 10): PoE1's <see cref="InstanceInventories"/> moved to the local player.</summary>
 public static class InstanceInventoriesPoe2
 {
-    public const ushort AddInventoryId = 0xdf;
+    public const ushort InventoryChangeId = 0xde, AddInventoryId = 0xdf;
 
     /// <summary>One Inventories.datc64 row (0.5.5e): row index, InventoryType (first u32), width (second u32), height
     /// (byte 10 after the Id), single item (byte 8) and equipment (byte 9), the same columns as PoE1.</summary>
@@ -74,6 +74,22 @@ public static class InstanceInventoriesPoe2
     /// Flags bit 0: single item, bit 1: equipment; bits 3 and 4 add a u64 and four u32 (off here). PoE1's two trailing
     /// bytes are gone. Neighbours: 0xde changes an inventory (PoE1 0xbf), 0xe0 removes one (PoE1 0xc1).
     /// </summary>
+    /// <summary>
+    /// S→C 0xde (read 0x142158b20, body 0x1427174f0): PoE1's change one inventory 0xbf with the route byte. u8 route, u8
+    /// manager, u32 inventory id, u32 revision, u32 removed count (0xffffffff: every item) + the item ids, u32 added count +
+    /// per item (0x1425aae20) u32 id, u8 x, u8 y and the item with its u16 length (0x1421ecef0), then u8 flag (1: four u32
+    /// follow); big-endian but the item data.
+    /// </summary>
+    public static byte[] InventoryChange(uint inventoryId, uint revision, IReadOnlyList<uint> removed, IReadOnlyList<InventoryItem> added,
+        byte manager = 0)
+    {
+        var w = new LoginWriter().U16(InventoryChangeId).U8(0).U8(manager).U32(inventoryId).U32(revision).U32((uint)removed.Count);
+        foreach (uint id in removed) w.U32(id);
+        w.U32((uint)added.Count);
+        foreach (var it in added) w.U32(it.Id).U8(it.X).U8(it.Y).Bytes(it.Item.Wire());
+        return w.U8(0).ToArray();
+    }
+
     public static byte[] AddInventory(uint inventoryId, Slot slot, byte manager = 0)
     {
         var w = new LoginWriter().U16(AddInventoryId).U8(0).U8(manager).U32(inventoryId)
