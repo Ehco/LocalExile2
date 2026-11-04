@@ -113,7 +113,7 @@ partial class Program
                 Console.WriteLine($"[gateway] {remote} {ticket.Character}: level {ticket.Level} {ticket.Class} ({row.ObjectType}), "
                     + $"life {sheet.MaximumLife}, mana {sheet.MaximumMana}");
                 // The level start (ExperienceLevels: PoE2 0.5.5e's matches PoE1's) needs data/tables/ExperienceLevels.json;
-                // without it the experience is 0 and the client shows level 1.
+                // without it the experience is 0, the client shows level 1 and kills level nobody up.
                 var walkable = Poe2Walkability(remote, area, seed);
                 var (exits, objects) = Poe2Layout(remote, area, seed);
                 var spawn = Poe2Spawn(remote, opening.Ticket, area, exits, objects, walkable);
@@ -124,7 +124,8 @@ partial class Program
                     Stats: [.. sheet.Stats, .. Poe2StartingSkills.UnarmedStats(row)],
                     Name: ticket.Character, ClassRow: row.Index, Experience: CharacterStats.ExperienceFor(ticket.Level),
                     Skills: Poe2StartingSkills.For(row)),
-                    objectType: row.ObjectType, walkable: walkable, exits: exits, monsters: monsters);
+                    objectType: row.ObjectType, walkable: walkable, exits: exits, monsters: monsters,
+                    levelStarts: CharacterStats.LevelStarts, onLevel: level => _ = SavePoe2Level(remote, opening.Ticket, level));
                 var clock = Stopwatch.StartNew();
                 double? leavingSince = null;
                 bool transferred = false;
@@ -194,6 +195,15 @@ partial class Program
         Console.WriteLine($"[gateway] {remote} ticket 0x{ticket:x8} not resolved ({resolved.Error ?? "unknown area"}); " +
                           "Clearfell Encampment, seed 1, instance 1");
         return new(Poe2FallbackArea, 1, 1, "Exile", CharacterClass.Witch, 1);
+    }
+
+    // A kill's new level goes to Auth's account store (and the next tickets): the character comes back at that level's
+    // start. The experience into the level is not saved.
+    static async Task SavePoe2Level(string remote, uint ticket, int level)
+    {
+        var saved = await InstanceControl.CallAsync(new ControlRequest { Op = "set_level", Ticket = ticket, Level = level });
+        Console.WriteLine(saved.Ok ? $"[gateway] {remote} level {level} saved"
+            : $"[gateway] {remote} level {level} not saved: {saved.Error ?? "no answer"}");
     }
 
     static string Poe2AreaId(ushort area) => Poe2Areas.ByHash(area)?.Id ?? $"0x{area:x4}";

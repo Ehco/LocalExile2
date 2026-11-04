@@ -1555,3 +1555,53 @@ Limits:
   checked against PoE2.
 - No action hit `0x1fb`, no stun, no flinch, no player regeneration.
 - The "in town" button and hardcore death are not handled.
+
+## Wave 24 — experience (2026-11-04)
+
+A kill gives the player experience; the client's experience bar and its level
+follow. Code: `InstanceSessionPoe2.Experience.cs`, `InstanceProgressionPoe2.cs`.
+
+- **The experience is a component update: S→C `0x2f9`** (world group, read
+  `0x141f6c8d0`). PoE1's `0x2ba` has no PoE2 counterpart.
+  - Format: object header, compact length, then that many bytes: the
+    component's index in the object's list, then that component's update.
+  - The world handler (case at `0x142136123`) picks the component by that
+    first byte and calls its vtable `+0xb0` with the rest.
+  - A player's components: Positioned 0, Stats 1, Pathfinding 2, Buffs 3,
+    Life 4, Animated 5, Player 6.
+- **The Player update** (reader `0x141dd0b90`) starts with u16 flags, read raw
+  (little-endian):
+  - bit 0: u32 experience, raw. It goes to the same setter as at the
+    player's creation (`0x141dd1360`), which derives the level;
+  - bit 1, bit 3: flags (`0x141deebf0`);
+  - bit 2: u16 at `+0x200`; bit 6: u16 at `+0x202`;
+  - bit 4: more fields; high byte bit 0: 5 raw bytes.
+
+  So the experience is `02f9`, header, `07`, `06 01 00`, u32 LE total.
+- **The gain** is PoE1's rule (`Progression.MonsterExperience`):
+  - DefaultMonsterStats' Experience at the monster's level × the variety's
+    ExperienceMultiplier, with the level penalty, capped at the start of the
+    last level;
+  - every monster counts as normal rarity;
+  - it goes to the killer only (no range rule; there is one player).
+  - A level 2 Rotting Guard gives 18 (multiplier 100 %).
+- **The level table**: `scripts/re/poe2/experience_levels.py` writes
+  `data/tables/ExperienceLevels.json` from PoE2's ExperienceLevels. Its 100 rows
+  match PoE1's (level 2: 525). Without it the experience is 0 and kills level
+  nobody up.
+- **A new level**:
+  - sends the class's new maximum life and mana (`0x1d3`, `Poe2CharacterStats`)
+    and refills both (`0x1cf`, life pool and mana pool);
+  - the Gateway saves it to Auth (`set_level`), so the character comes back at
+    that level's start. The experience into the level is not saved.
+
+**Live test (2026-11-04).** A level 1 Warrior killed a Rotting Guard in
+Clearfell. The bar's tooltip read "Level 1 (3%)", "Current Exp: 18 / Next
+Level: 525".
+
+Limits:
+- The level-up (30 kills at level 1) is checked by unit tests only: the new
+  maximums, the refill and the save to Auth.
+- The experience into a level is lost when the player leaves the area or logs
+  out.
+- No rarity, no party share, no PoE2 death penalty.

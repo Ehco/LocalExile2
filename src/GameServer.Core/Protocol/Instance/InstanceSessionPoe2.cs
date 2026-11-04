@@ -48,16 +48,20 @@ public sealed partial class InstanceSessionPoe2
 
     /// <param name="walkable">The area's walkability (cells the client walks on), when the server has its walk map;
     /// without it the walk estimate goes through walls.</param>
+    /// <param name="levelStarts">Each level's starting experience (ExperienceLevels, index = level − 1); without it the
+    /// player stays level 1.</param>
+    /// <param name="onLevel">Called with the new level when a kill levels the player up (under the session's lock).</param>
     public InstanceSessionPoe2(PlayerObjectPoe2 player, string objectType = DefaultObjectType, uint playerId = DefaultPlayerId,
         double walkSpeed = DirectionWalk.DefaultSpeed, Func<int, int, bool>? walkable = null,
         IReadOnlyList<AreaTransitionObjectPoe2>? exits = null, IReadOnlyList<Poe2Monster>? monsters = null,
-        Random? random = null)
+        Random? random = null, IReadOnlyList<uint>? levelStarts = null, Action<int>? onLevel = null)
     {
         (_player, _objectType, PlayerId, _exits, _monsters) = (player, objectType, playerId, exits ?? [], monsters ?? []);
         Walk = new DirectionWalk(player.GridX, player.GridY, walkSpeed, walkable);
         _walkSpeed = walkSpeed;
         _monsterLife = [.. _monsters.Select(m => (int)m.Object.Life)];
         _random = random ?? Random.Shared;
+        InitExperience(levelStarts, onLevel);
         InitMonsters();
     }
 
@@ -203,6 +207,8 @@ public sealed partial class InstanceSessionPoe2
         if (_monsterLife[a.Monster] == 0)
             yield return InstanceCombatPoe2.StatsUpdate(MonsterId(a.Monster), [(InstanceCombatPoe2.HideMiniLifeBar, 1)]);
         yield return InstanceCombatPoe2.LifeUpdate(MonsterId(a.Monster), _monsterLife[a.Monster]);
+        if (_monsterLife[a.Monster] == 0)
+            foreach (var m in GainExperience(a.Monster)) yield return m;
     }
 
     // Skill bar: slot → skill id, as the client set it (C→S 0x5c).
@@ -224,8 +230,8 @@ public sealed partial class InstanceSessionPoe2
 
     private IEnumerable<uint> SkillIds => (_player.Skills ?? []).Select(s => s.Id);
 
-    /// <summary>The server's per-frame work at <paramref name="now"/>: the hit of an attack when it lands (0x1cf), the
-    /// monsters' chases, attacks and hits (0x1c8, 0x1cf on the player), and the change area (0x2f1) when the walk reaches
+    /// <summary>The server's per-frame work at <paramref name="now"/>: the hit of an attack when it lands (0x1cf, and the
+    /// kill's experience 0x2f9), the monsters' chases, attacks and hits (0x1c8, 0x1cf on the player), and the change area (0x2f1) when the walk reaches
     /// an exit. Empty otherwise, and after the player has left.</summary>
     public IReadOnlyList<byte[]> Tick(double now)
     {

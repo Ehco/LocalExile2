@@ -4,7 +4,7 @@ Read this first if you are picking up the PoE2 work. It covers where things stan
 from nothing, how to run a live test, and what to do next. The wave-by-wave findings (addresses, message layouts,
 live results) are in [PORTING-POE2.md](PORTING-POE2.md). This file points into it and does not repeat it.
 
-Last updated 2026-11-04, after wave 22.
+Last updated 2026-11-04, after wave 24.
 
 ## Where it stands
 
@@ -14,8 +14,8 @@ on its character screen; the player enters as the saved character (name, class m
 and inventories, the area is drawn, and the player walks. The server's estimate of where the player is stops at
 walls. Walking into the camp's gate takes the player to Clearfell, and its exit back returns to the camp. Clearfell's
 monsters chase the player and hit it. The player has Punch and the dodge roll on its skill bar; Punch on a monster
-walks the player to it and punches; the monster loses life and dies. At 0 life the player dies, gets the death screen
-and can resurrect at the area's arrival point.
+walks the player to it and punches; the monster loses life and dies, and the kill gives experience (the level is saved).
+At 0 life the player dies, gets the death screen and can resurrect at the area's arrival point.
 
 | Part | State | Where |
 |---|---|---|
@@ -33,8 +33,9 @@ and can resurrect at the area's arrival point.
 | Skills, skill bar, attacks | Punch and the dodge roll in the Actor; the picker's list `0x66`, slot binding `0x5c`, skill use `0x1a5` echoed with `0x1c8` for targeted uses. No damage; slots kept per session only | `SkillsPoe2.cs`, `Poe2StartingSkills.cs`, `InstanceSkillsPoe2.cs`, `scripts/re/poe2/dat.py`; wave 21 |
 | Hits, monster death | Punch hits land after the approach (`0x1cf` life, `0x1d3` stats); monster life from DefaultMonsterStats × LifeMultiplier; death at 0. No loot, no action hit `0x1fb` | `InstanceCombatPoe2.cs`, `InstanceSessionPoe2.cs`, `Poe2Monsters.cs`; wave 22 |
 | Monster AI, player death | Aggro, chase (MoveTo `0x1e0`, no pathing), swings (`0x1c8`) and hits on the player; the death screen `0x6d`, resurrect C→S `0x6c` (teleport `0x1dd`) | `InstanceSessionPoe2.Monsters.cs`, `Poe2Monsters.AttackOf`; wave 23 |
+| Experience, levels | A kill's experience in the Player component (`0x2f9`); a new level raises and refills life and mana and is saved to Auth. The experience into a level is not saved | `InstanceSessionPoe2.Experience.cs`, `InstanceProgressionPoe2.cs`, `scripts/re/poe2/experience_levels.py`; wave 24 |
 
-**Tests.** 625/625 pass:
+**Tests.** 629/629 pass:
 
 ```bash
 dotnet test tests/GameServer.Core.Tests -c Release
@@ -130,6 +131,10 @@ Once per machine. Everything generated here lives in `data/`, which git ignores.
    python scripts/re/poe2/monster_varieties.py
    ```
    - Rerun it after capturing a new area. It exists here.
+8. **Experience levels.** Without `data/tables/ExperienceLevels.json` the player stays level 1 and kills give nothing:
+   ```bash
+   python scripts/re/poe2/experience_levels.py
+   ```
 
 ## Running a live test
 
@@ -265,8 +270,8 @@ In rough order. Each is a wave of its own.
    - add its exit rules to `Poe2Areas` (room fragments → destinations, from its `.tgr` entranceK labels).
 
    Also open: the exit click, the town gates not drawn, C→S `0x362`.
-6. **Combat** (waves 21–23 did the skills, the attack, hits, monster death, monster AI and the player's death):
-   experience, loot (with items); monster pathing (the chase glides through walls), PoE2's monster damage rule. Then items, gems, passives, NPCs, waypoints and quests. PoE1's
+6. **Combat** (waves 21–24 did the skills, the attack, hits, monster death, monster AI, the player's death and
+   experience): loot (with items); monster pathing (the chase glides through walls), PoE2's monster damage rule. Then items, gems, passives, NPCs, waypoints and quests. PoE1's
    Gateway is the template; re-verify every id against PoE2.
 
 ## Wave index
@@ -296,4 +301,5 @@ In rough order. Each is a wave of its own.
 | 20 | Monsters, the wake zone, pause | `2dd71ca` |
 | 21 | Skills, the skill bar, a targeted attack | `c28161f` |
 | 22 | Hits and monster death | `b4171db` |
-| 23 | Monster AI, the player's death | the commit after `b4171db` |
+| 23 | Monster AI, the player's death | `85da914` |
+| 24 | Experience | the commit after `85da914` |

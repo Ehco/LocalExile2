@@ -38,7 +38,7 @@ public sealed partial class InstanceSessionPoe2
 
     private void InitMonsters()
     {
-        _playerLife = (int)_player.Life;
+        _playerLife = _maximumLife;
         _monsterStates = [.. _monsters.Select(m => new MonsterState
         {
             From = (m.Object.GridX, m.Object.GridY), To = (m.Object.GridX, m.Object.GridY),
@@ -130,7 +130,7 @@ public sealed partial class InstanceSessionPoe2
     // instance).
     private IReadOnlyList<byte[]> Resurrect(double now)
     {
-        _playerLife = (int)_player.Life;
+        _playerLife = _maximumLife;
         Walk.Place(_player.GridX, _player.GridY, now);
         var sent = new List<byte[]>
         {
