@@ -15,6 +15,9 @@ using GameServer.Storage;
 // (Game_SAVES_DB, default data/saves.db, shared with GameServer.Host and the Gateway; register through the Host), with an
 // older data/accounts.json (Game_DEV_DB) imported once. Instance keys: data/instance-secret.bin (Game_INSTANCE_SECRET),
 // shared with GameServer.Gateway. Instance control for the Gateway: 127.0.0.1:Game_AUTH_CONTROL_PORT (20495).
+// Game_CLIENT=poe2 serves the PoE2 Steam client instead (PORTING-POE2.md, wave 15): its login dialect, every Steam login
+// into the account Game_POE2_ACCOUNT (default "steam", created on first use, with the character Game_POE2_CHARACTER,
+// default "Exile", when it has none), and Play into Clearfell Encampment. The PoE2 client dials Game_LOGIN_PORT=21265.
 
 const string DefaultKeys = "data/login-keys.json";
 string cmd = args.Length > 0 ? args[0] : "serve";
@@ -131,17 +134,31 @@ static async Task Serve(LoginServerKeys keys)
     var directory = new InstanceDirectory(registry, accounts, towns, character =>
         CharacterHome.SelectedHideout(progress, character) is { } area && hideoutAreas.TryGetValue(area, out ushort hash) ? hash : null);
     _ = directory.ServeControlAsync(InstanceControl.Port);
-    Console.WriteLine($"[auth] login server on tcp/{port}");
+    var poe2 = Poe2Login.FromEnvironment();
+    if (poe2 is not null)
+    {
+        // Created now, so a bad Game_POE2_ACCOUNT stops Auth instead of failing every login.
+        var steam = accounts.LoginTrusted(poe2.Account);
+        if (!steam.Ok)
+        {
+            Console.Error.WriteLine($"[auth] Game_POE2_ACCOUNT \"{poe2.Account}\" cannot be used: {steam.Error} (3 to 32 letters, digits, _ or -)");
+            Environment.Exit(1);
+        }
+        if (!IPAddress.IsLoopback(bind))
+            Console.WriteLine($"[auth] warning: on {bind}, anyone who reaches tcp/{port} logs in as {poe2.Account} (PoE2 Steam logins need no password)");
+    }
+    Console.WriteLine($"[auth] login server on tcp/{port}" + (poe2 is null ? "" : $", PoE2 client: Steam logins open account {poe2.Account}"));
     // Game_LEAGUES: comma-separated base leagues (default Standard, Allflame), each with its Hardcore / SSF / Ruthless variants.
     Console.WriteLine($"[auth] leagues: {string.Join(", ", LeagueCatalog.FromEnvironment().All.Select(l => l.Name))}");
     while (true)
     {
         var tcp = await listener.AcceptTcpClientAsync();
-        _ = Task.Run(() => HandleConnection(tcp, keys, accounts, keyring, directory));
+        _ = Task.Run(() => HandleConnection(tcp, keys, accounts, keyring, directory, poe2));
     }
 }
 
-static async Task HandleConnection(TcpClient tcp, LoginServerKeys keys, AccountService accounts, InstanceKeyring keyring, InstanceDirectory directory)
+static async Task HandleConnection(TcpClient tcp, LoginServerKeys keys, AccountService accounts, InstanceKeyring keyring,
+    InstanceDirectory directory, Poe2Login? poe2)
 {
     string peer = tcp.Client.RemoteEndPoint?.ToString() ?? "?";
     Console.WriteLine($"[auth] {peer} connected");
@@ -167,19 +184,27 @@ static async Task HandleConnection(TcpClient tcp, LoginServerKeys keys, AccountS
             Console.WriteLine($"[auth] {peer} key exchange answered; traffic is now Salsa20");
 
             // Anything the client sent after its 0x0002 is already ciphertext.
-            var incoming = new LoginMessageStream(LoginDirection.ClientToServer);
+            var incoming = new LoginMessageStream(LoginDirection.ClientToServer, poe2 is null ? LoginDialect.Poe1 : LoginDialect.Poe2);
             InstanceDirectory.LoginLink? link = null;
-            var session = new LoginServerSession(accounts) { Keyring = keyring, Leagues = LeagueCatalog.FromEnvironment(), CharacterDeleted = SetSaveAside, Assign = s => directory.AssignStart(s, link!) };
+            var session = new LoginServerSession(accounts)
+            {
+                Keyring = keyring, Leagues = LeagueCatalog.FromEnvironment(), CharacterDeleted = SetSaveAside,
+                Assign = s => directory.AssignStart(s, link!, poe2 is null ? null : Poe2Login.StartArea),
+                SteamAccount = poe2?.Account, SteamCharacter = poe2?.Character ?? "Exile",
+                Notice = text => Console.WriteLine($"[auth] {peer} {text}"),
+            };
             link = new InstanceDirectory.LoginLink(stream, ciphers, session, peer);
             byte[] rest = buf[used..have];
             try
             {
-                if (rest.Length > 0) await Reply(link, Receive(peer, ciphers, incoming, rest));
+                // A PoE2 client's first message carries its Steam ticket: no raw dumps of it if it cannot be decoded.
+                bool HideRaw() => poe2 is not null && session.Session is null;
+                if (rest.Length > 0) await Reply(link, Receive(peer, ciphers, incoming, rest, HideRaw()));
                 while (!session.Failed)
                 {
                     int n = await stream.ReadAsync(buf);
                     if (n == 0) break;
-                    await Reply(link, Receive(peer, ciphers, incoming, buf[..n]));
+                    await Reply(link, Receive(peer, ciphers, incoming, buf[..n], HideRaw()));
                 }
             }
             finally { directory.Forget(link); }
@@ -196,8 +221,8 @@ static async Task HandleConnection(TcpClient tcp, LoginServerKeys keys, AccountS
 }
 
 // Decrypts a chunk and logs each complete message. After an unknown id the stream can't be resynchronized (no length
-// prefix), so the rest is hex-dumped as it arrives.
-static List<ILoginMessage> Receive(string peer, ConnectionCiphers ciphers, LoginMessageStream incoming, byte[] data)
+// prefix), so the rest is hex-dumped as it arrives, or only counted with hideRaw.
+static List<ILoginMessage> Receive(string peer, ConnectionCiphers ciphers, LoginMessageStream incoming, byte[] data, bool hideRaw = false)
 {
     ciphers.Receive.Process(data);
     bool wasDesynced = incoming.Desynced;
@@ -205,11 +230,9 @@ static List<ILoginMessage> Receive(string peer, ConnectionCiphers ciphers, Login
     foreach (var m in messages)
         Console.WriteLine($"[auth] {peer} <= {LoginMessageFormat.Describe(Redact(m))}");
     if (!incoming.Desynced) return messages;
-    if (!wasDesynced)
-    {
-        Console.WriteLine($"[auth] {peer} cannot decode further: {incoming.Error}");
-        Dump([.. incoming.Undecoded]);
-    }
+    if (!wasDesynced) Console.WriteLine($"[auth] {peer} cannot decode further: {incoming.Error}");
+    if (hideRaw) Console.WriteLine($"[auth] {peer} {(wasDesynced ? data.Length : incoming.Undecoded.Count)} undecoded bytes not shown (before login)");
+    else if (!wasDesynced) Dump([.. incoming.Undecoded]);
     else Dump(data);
     return messages;
 }
@@ -220,10 +243,12 @@ static ILoginMessage Redact(ILoginMessage m) => m switch
 {
     AccountLogin l => l with { PasswordDigest = [], MachineIdA = [], MachineIdB = [] },
     TokenLogin t => t with { Token = [], MachineIdA = [], MachineIdB = [] },
+    TokenLoginPoe2 t => t with { Token = [], MachineIdA = [], MachineIdB = [] },
     TicketLogin t => t with { Ticket = "<redacted>", MachineIdA = [], MachineIdB = [] },
     EpicLogin e => e with { Token = [] },
     TwoDigests d => d with { DigestA = [], DigestB = [] },
     CreateCharacter r => r with { PasswordDigest = [] },
+    CreateCharacterPoe2 r => r with { PasswordDigest = [] },
     _ => m,
 };
 
@@ -259,4 +284,20 @@ static void Dump(byte[] data)
         string ascii = new(row.ToArray().Select(b => b is >= 0x20 and < 0x7f ? (char)b : '.').ToArray());
         Console.WriteLine($"        {i:x4}  {Convert.ToHexString(row).ToLowerInvariant(),-32}  {ascii}");
     }
+}
+
+// Game_CLIENT=poe2: the PoE2 Steam client's settings (see the header).
+sealed record Poe2Login(string Account, string Character)
+{
+    // WorldAreas G1_town (Clearfell Encampment), HASH16: where Play puts every PoE2 character until Auth serves PoE2 areas.
+    // Game_POE2_START_AREA (a HASH16 in hex, e.g. 9875 for Clearfell) starts in another area, for tests.
+    public static readonly ushort StartArea =
+        ushort.TryParse(Environment.GetEnvironmentVariable("Game_POE2_START_AREA"),
+            System.Globalization.NumberStyles.HexNumber, null, out ushort area) ? area : (ushort)0x3f70;
+
+    public static Poe2Login? FromEnvironment() =>
+        string.Equals(Environment.GetEnvironmentVariable("Game_CLIENT"), "poe2", StringComparison.OrdinalIgnoreCase)
+            ? new(Environment.GetEnvironmentVariable("Game_POE2_ACCOUNT") ?? "steam",
+                Environment.GetEnvironmentVariable("Game_POE2_CHARACTER") ?? "Exile")
+            : null;
 }

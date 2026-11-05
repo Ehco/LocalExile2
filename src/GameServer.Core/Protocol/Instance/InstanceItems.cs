@@ -93,11 +93,14 @@ public sealed record Item(uint TypeHash, IReadOnlyList<string> Components, ushor
     /// in a shop.</summary>
     public IReadOnlyList<(uint TypeHash, uint Amount)> Price { get; init; } = [];
 
+    /// <summary>A PoE2 item (PORTING-POE2.md, wave 26): its Mods component is PoE2's (<see cref="Poe2Mods"/>).</summary>
+    public bool Poe2 { get; init; }
+
     /// <summary>The four item types whose data ends with an extra u16 (0x1421ebe90; the writer sends 1).</summary>
     static readonly uint[] TrailingU16 = [0x192c7aab, 0x365f206a, 0x503da850, 0x9aff2df6];
 
     /// <summary>Components whose slot 5 reads nothing (their vtables' slot 5 is the bare `ret` 0x1400f0f00).</summary>
-    public static readonly HashSet<string> NoData = ["LocalStats", "AttributeRequirements", "Weapon", "Usable", "Flask", "Quest", "Shield", "RenderItem"];
+    public static readonly HashSet<string> NoData = ["LocalStats", "AttributeRequirements", "Weapon", "Usable", "Flask", "Quest", "Shield", "RenderItem", "Wieldable"];
 
     /// <summary>Components <see cref="Payload"/> can write.</summary>
     public static readonly HashSet<string> Supported = [.. NoData, "Base", "Mods", "Armour", "Quality", "Sockets", "Charges", "Stack", "SkillGem", "Map", "MapKey"];
@@ -153,6 +156,7 @@ public sealed record Item(uint TypeHash, IReadOnlyList<string> Components, ushor
                     break;
                 // 0x1421df6e0: u8 +0x2b8 (item level), u8 +0x2bc (level requirement, kept as sent), u16 flags (bit 6
                 // incubator, bit 4 → u8, bit 15 a 0x1c8 record), the base magic properties 0x142201d70 (MagicProperties), u8, u8.
+                case "Mods" when Poe2: Poe2Mods(w); break;
                 case "Mods":
                     w.U8(ItemLevel).U8((byte)Math.Clamp(RequiredLevel ?? LevelRequirementOf?.Invoke(this) ?? 0, 0, 255)).U16((ushort)(Mirrored ? 0x2 : 0));
                     MagicProperties(w); w.U8(0).U8(0);
@@ -171,6 +175,11 @@ public sealed record Item(uint TypeHash, IReadOnlyList<string> Components, ushor
                 // IndexableSupportGems index (0: none).
                 // The network reader copies the flags byte verbatim; unlike the native copy it does not derive
                 // bit 5 from the variant. Normalize it here for both standalone and nested socket gems.
+                // PoE2's SkillGem (vtable 0x1435157d8, read 0x1421e7240; wave 30): i32 experience (-1 = the max level), u32
+                // (+0x34), u32 (+0x30), u8 flags (+0x10), u8 (+0x38), u16 (an IndexableSupportGems index, 0x1421e8490).
+                // PoE1's 11 bytes crashed the client ("buffer underflow", live 2026-11-05).
+                case "SkillGem" when Poe2: w.I32(GemExperience).U32(0).U32((uint)GemVariant)
+                    .U8((byte)((GemFlags & ~0x20) | (GemVariant > 0 ? 0x20 : 0))).U8(0).U16(0); break;
                 case "SkillGem": w.I32(GemExperience).U32((uint)GemVariant)
                     .U8((byte)((GemFlags & ~0x20) | (GemVariant > 0 ? 0x20 : 0))).U16(0); break;
                 // 0x1421e2e20: u8 = bit0/bit1 (special, nothing more) | socket count << 2 | link group count << 5; per socket
@@ -202,6 +211,26 @@ public sealed record Item(uint TypeHash, IReadOnlyList<string> Components, ushor
     /// </summary>
     void MagicProperties(BlobWriter w) =>
         global::GameServer.Core.Protocol.Instance.MagicProperties.Write(w, (byte)Rarity, Identified, Mods, NameWords, u7a: FracturedCount);
+
+    /// <summary>
+    /// PoE2's Mods component (read 0x1421e3420, write 0x1421e3100; vtable 0x1435151f8): u8 item level (+0x240), u8 level
+    /// requirement (+0x244), u8 usable (+0x263, <see cref="Poe2Usable"/>), u8 flags (bit 0 → +0x264, bit 1 +0x265, bit 2 +0x266, bit 3 → +0x268 and a u8
+    /// +0x269, bit 4 +0x26a, bit 5 → u16, u16, u8, bit 6 +0x26c, bit 7 +0x24c), two u8-counted lists of nested items,
+    /// the magic properties (0x1423c2ee0: u16 flags, u8 +0x7a, then lists by flag), then for unidentified items one u8
+    /// (+0x248). Only items without mods are checked live; bit 1 is taken to be PoE1's mirrored flag.
+    /// </summary>
+    /// <summary>Mods +0x263: 0 makes the client treat the item as unusable (its popup's "You cannot use this item",
+    /// 0x1425d1300 → 0x1425f0fa0; a worn weapon's slot is drawn red and its skills refused). An item without Mods gets 7
+    /// there (0x1425d15ff); what each bit means is not known.</summary>
+    public const byte Poe2Usable = 7;
+
+    void Poe2Mods(BlobWriter w)
+    {
+        w.U8(ItemLevel).U8((byte)Math.Clamp(RequiredLevel ?? LevelRequirementOf?.Invoke(this) ?? 0, 0, 255)).U8(Poe2Usable)
+            .U8((byte)(Mirrored ? 0x2 : 0)).U8(0).U8(0);
+        MagicProperties(w);
+        if (!Identified) w.U8(0);
+    }
 
     /// <summary>The item as inventories and other messages carry it (0x1421ec1d0 / 0x1421ec2c0): u16 big-endian length,
     /// then <see cref="Payload"/>.</summary>

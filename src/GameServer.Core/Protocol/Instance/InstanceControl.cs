@@ -1,3 +1,4 @@
+using GameServer.Core.Accounts;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
@@ -48,7 +49,13 @@ public static class InstanceControl
 /// the ticket's player and returns the destination's new Ticket (with New, Seed ≠ 0 gives the new instance that seed:
 /// the Gateway's capture tour); "leave" (Ticket) → the player left its instance (expiry starts);
 /// "set_level" (Ticket, Level) → the ticket's character gets that level (1 to 100) in the account store;
-/// "set_portrait" (Ticket, Portrait) → the ticket's character's worn portrait, which the character list shows.
+/// "set_portrait" (Ticket, Portrait) → the ticket's character's worn portrait, which the character list shows;
+/// "set_quest_flags" (Ticket, Flags) → the ticket's PoE2 character's whole quest flag list (QuestFlags Ids);
+/// "set_waypoints" (Ticket, Flags) → its whole list of activated waypoints (WorldAreas Ids);
+/// "set_passives" (Ticket, Values) → its whole list of allocated passive nodes;
+/// "set_progress" (Ticket, Experience, Gold) → its total experience and gold;
+/// "set_gems" (Ticket, Values) → its whole list of socketed skill gems;
+/// "set_items" (Ticket, Items) → its whole inventory. "resolve" returns all of them.
 /// </summary>
 public sealed record ControlRequest
 {
@@ -60,6 +67,15 @@ public sealed record ControlRequest
     public uint Seed { get; init; }
     public int Level { get; init; }
     public ushort Portrait { get; init; }
+    /// <summary>"set_quest_flags" / "set_waypoints": the whole new list.</summary>
+    public List<string>? Flags { get; init; }
+    /// <summary>"set_passives": the whole new list of PassiveSkillGraphIds; "set_gems": the socketed gems.</summary>
+    public List<int>? Values { get; init; }
+    /// <summary>"set_progress": the character's total experience and gold.</summary>
+    public uint Experience { get; init; }
+    public uint Gold { get; init; }
+    /// <summary>"set_items": the whole inventory.</summary>
+    public List<SavedItem>? Items { get; init; }
 }
 
 public sealed record ControlResponse
@@ -92,6 +108,16 @@ public sealed record ControlResponse
     /// town (the death screen then has no Resurrect in Town). An Auth that does not send it leaves Lioneye's Watch.</summary>
     public ushort LastTown { get; init; } = 0x235c;
     public List<ControlInstance>? Instances { get; init; }
+    /// <summary>"resolve": a PoE2 character's quest flags (QuestFlags Ids) and activated waypoints (WorldAreas Ids).</summary>
+    public List<string>? QuestFlags { get; init; }
+    public List<string>? Waypoints { get; init; }
+    public List<int>? Passives { get; init; }
+    /// <summary>"resolve": a PoE2 character's total experience and gold (wave 29).</summary>
+    public uint Experience { get; init; }
+    public uint Gold { get; init; }
+    /// <summary>"resolve": a PoE2 character's socketed skill gems (wave 30) and saved inventory (wave 31).</summary>
+    public List<int>? Gems { get; init; }
+    public List<SavedItem>? Items { get; init; }
 }
 
 public sealed record ControlInstance(ulong Id, long CreatedUnix, int SecondsLeft, List<string> Players);

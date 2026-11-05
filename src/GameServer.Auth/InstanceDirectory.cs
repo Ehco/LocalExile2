@@ -42,7 +42,13 @@ sealed class InstanceDirectory(InstanceRegistry registry, AccountService? accoun
             await _lock.WaitAsync();
             try
             {
-                var logged = message is LoginResult result ? result with { Digest = [], Data = [] } : message;
+                var logged = message switch
+                {
+                    LoginResult result => result with { Digest = [], Data = [] },
+                    LoginResultPoe2 result => result with { Digest = [], Data = [] },
+                    InstanceInfo info => info with { Key64 = [] },   // the instance connection's key
+                    _ => message,
+                };
                 Console.WriteLine($"[auth] {peer} => {LoginMessageFormat.Describe(logged)}");
                 byte[] wire = LoginMessage.Encode(message);
                 ciphers.Send.Process(wire);
@@ -52,13 +58,14 @@ sealed class InstanceDirectory(InstanceRegistry registry, AccountService? accoun
         }
     }
 
-    /// <summary>Play (login 0x0e): enter the chosen home, or last town if none; record the ticket and login link.</summary>
-    public (ushort Area, uint Ticket) AssignStart(LoginServerSession session, LoginLink link)
+    /// <summary>Play (login 0x0e): enter <paramref name="area"/> if given (the PoE2 client: Clearfell Encampment), else the
+    /// chosen home, or last town if none; record the ticket and login link.</summary>
+    public (ushort Area, uint Ticket) AssignStart(LoginServerSession session, LoginLink link, ushort? area = null)
     {
         string character = session.CharacterName ?? "?";
         _links[character] = link;
         // Explicitly selected homes take precedence; characters without a choice retain town progression.
-        var inst = registry.Enter(loginHideout?.Invoke(character) ?? WorldAreaTowns.LoginArea(session.CharacterLastTown, _towns),
+        var inst = registry.Enter(area ?? loginHideout?.Invoke(character) ?? WorldAreaTowns.LoginArea(session.CharacterLastTown, _towns),
             character, session.CharacterLeague?.Name, session.CharacterLeague?.Ssf ?? false, session.CharacterId?.ToString("N"));
         return (inst.AreaHash, NewTicket(session, character, inst));
     }
@@ -141,17 +148,22 @@ sealed class InstanceDirectory(InstanceRegistry registry, AccountService? accoun
                 if (inst is { IsTown: true } && _towns.FirstOrDefault(t => t.Hash16 == inst.AreaHash) is { Id: { } town }
                     && accounts?.SetLastTown(info.Character, town) is { Ok: true })
                     Console.WriteLine($"[auth] {info.Character}: last town {town}");
+                var character = accounts?.FindCharacter(info.Character);
                 return new ControlResponse
                 {
                     Ok = inst is not null, Error = inst is null ? "instance expired" : null, Area = info.Area,
                     Seed = inst?.Seed ?? 0, Instance = info.Instance, Created = inst?.Created.ToUnixTimeMilliseconds() ?? 0, IsTown = inst?.IsTown ?? false, Character = info.Character,
                     CharacterId = info.CharacterId,
-                    Account = accounts?.FindCharacter(info.Character) is { } owner ? accounts.GetAccount(owner.AccountId)?.Name : null,
+                    Account = character is { } owner ? accounts!.GetAccount(owner.AccountId)?.Name : null,
                     League = info.League?.Name, Hardcore = info.League?.Hardcore ?? false,
                     Ssf = info.League?.Ssf ?? false, Ruthless = info.League?.Ruthless ?? false,
                     Class = (int)info.Class, Level = info.Level,
-                    LastTown = accounts?.FindCharacter(info.Character)?.LastTown is { } last
+                    LastTown = character?.LastTown is { } last
                         && _towns.FirstOrDefault(t => t.Id == last) is { Id: not null } known ? known.Hash16 : (ushort)0,
+                    QuestFlags = [.. character?.QuestFlags ?? []], Waypoints = [.. character?.Waypoints ?? []],
+                    Passives = [.. character?.Passives ?? []],
+                    Experience = character?.Experience ?? 0, Gold = character?.Gold ?? 0,
+                    Gems = [.. character?.Gems ?? []], Items = [.. character?.Items ?? []],
                 };
             }
             case "list":
@@ -198,6 +210,46 @@ sealed class InstanceDirectory(InstanceRegistry registry, AccountService? accoun
                 var r = accounts.SetPortrait(info.Character, req.Portrait);
                 if (!r.Ok) return new ControlResponse { Ok = false, Error = r.Error.ToString() };
                 Console.WriteLine($"[auth] {info.Character}: portrait {req.Portrait}");
+                return new ControlResponse { Ok = true, Character = info.Character };
+            }
+            case "set_passives":
+            {
+                if (accounts is null) return new ControlResponse { Ok = false, Error = "no account store" };
+                var r = accounts.SetPassives(info.Character, req.Values ?? []);
+                if (!r.Ok) return new ControlResponse { Ok = false, Error = r.Error.ToString() };
+                Console.WriteLine($"[auth] {info.Character}: passives {(req.Values ?? []).Count}");
+                return new ControlResponse { Ok = true, Character = info.Character };
+            }
+            case "set_items":
+            {
+                if (accounts is null) return new ControlResponse { Ok = false, Error = "no account store" };
+                var r = accounts.SetItems(info.Character, req.Items ?? []);
+                if (!r.Ok) return new ControlResponse { Ok = false, Error = r.Error.ToString() };
+                return new ControlResponse { Ok = true, Character = info.Character };
+            }
+            case "set_gems":
+            {
+                if (accounts is null) return new ControlResponse { Ok = false, Error = "no account store" };
+                var r = accounts.SetGems(info.Character, req.Values ?? []);
+                if (!r.Ok) return new ControlResponse { Ok = false, Error = r.Error.ToString() };
+                Console.WriteLine($"[auth] {info.Character}: gems {(req.Values ?? []).Count}");
+                return new ControlResponse { Ok = true, Character = info.Character };
+            }
+            case "set_progress":
+            {
+                if (accounts is null) return new ControlResponse { Ok = false, Error = "no account store" };
+                var r = accounts.SetProgress(info.Character, req.Experience, req.Gold);
+                if (!r.Ok) return new ControlResponse { Ok = false, Error = r.Error.ToString() };
+                return new ControlResponse { Ok = true, Character = info.Character, Experience = req.Experience, Gold = req.Gold };
+            }
+            case "set_quest_flags":
+            case "set_waypoints":
+            {
+                if (accounts is null) return new ControlResponse { Ok = false, Error = "no account store" };
+                var list = req.Flags ?? [];
+                var r = req.Op == "set_quest_flags" ? accounts.SetQuestFlags(info.Character, list) : accounts.SetWaypoints(info.Character, list);
+                if (!r.Ok) return new ControlResponse { Ok = false, Error = r.Error.ToString() };
+                Console.WriteLine($"[auth] {info.Character}: {(req.Op == "set_quest_flags" ? "quest flags" : "waypoints")} {list.Count}");
                 return new ControlResponse { Ok = true, Character = info.Character };
             }
             case "leave":

@@ -95,6 +95,31 @@ public ref struct LoginReader(ReadOnlySpan<byte> buf)
     public byte[] Blob() { int n = U16(); return Short ? [] : Fixed(n); }
     public string Str() => Encoding.UTF8.GetString(Blob());
 
+    /// <summary>Inverse of InstanceProtocol.CompactUInt: &lt; 0x80 one byte; 0x80/0xc0/0xe0 tags with 14/21/28 bits;
+    /// 0xf0 + u32.</summary>
+    public uint CompactUInt()
+    {
+        var (v, _) = Compact();
+        return v;
+    }
+
+    /// <summary>Inverse of InstanceProtocol.CompactInt: the same tags, value sign-extended from 7/14/21/28 bits.</summary>
+    public int CompactInt()
+    {
+        var (v, bits) = Compact();
+        return bits == 32 ? (int)v : (int)(v << (32 - bits)) >> (32 - bits);
+    }
+
+    private (uint Value, int Bits) Compact()
+    {
+        byte b = U8();
+        if (b < 0x80) return (b, 7);
+        if (b < 0xc0) return ((uint)(b & 0x3f) << 8 | U8(), 14);
+        if (b < 0xe0) return ((uint)(b & 0x1f) << 16 | (uint)U8() << 8 | U8(), 21);
+        if (b < 0xf0) return ((uint)(b & 0x0f) << 24 | (uint)U8() << 16 | (uint)U8() << 8 | U8(), 28);
+        return (U32(), 32);
+    }
+
     /// <summary>Inverse of <see cref="LoginWriter.WStr"/>, with the client's checks from 0x140e0cbe0.</summary>
     public string WStr()
     {

@@ -105,6 +105,35 @@ public sealed class AccountService(IAccountStore store, TimeProvider? clock = nu
         return Result<Session>.Success(NewSession(acc));
     }
 
+    /// <summary>Login without a password into the account the server is configured to trust, created on first use with a
+    /// random password: the PoE2 Steam client sends only a Steam ticket, which cannot be checked offline.</summary>
+    public Result<Session> LoginTrusted(string name)
+    {
+        lock (_gate)
+        {
+            var acc = store.FindAccount(name);
+            if (acc is null)
+            {
+                var created = Register(name, Convert.ToBase64String(RandomNumberGenerator.GetBytes(24)));
+                if (!created.Ok) return Result<Session>.Fail(created.Error);
+                acc = created.Value!;
+            }
+            return Result<Session>.Success(NewSession(acc));
+        }
+    }
+
+    /// <summary>Creates <paramref name="name"/> for an account that has no character; Success(null) when it has one. The
+    /// check and the creation are one step, so two logins at once create it once.</summary>
+    public Result<Character?> EnsureCharacter(Guid accountId, string name, CharacterClass cls)
+    {
+        lock (_gate)
+        {
+            if (store.CharactersOf(accountId).Count > 0) return Result<Character?>.Success(null);
+            var created = CreateCharacter(accountId, name, cls);
+            return created.Ok ? Result<Character?>.Success(created.Value) : Result<Character?>.Fail(created.Error);
+        }
+    }
+
     private Session NewSession(Account acc)
     {
         var now = _clock.GetUtcNow();
@@ -164,6 +193,84 @@ public sealed class AccountService(IAccountStore store, TimeProvider? clock = nu
             var c = store.FindCharacter(characterName);
             if (c is null) return Result<Character>.Fail(AuthError.NotFound);
             var u = c with { Level = level };
+            store.UpdateCharacter(u);
+            return Result<Character>.Success(u);
+        }
+    }
+
+    /// <summary>Replaces a PoE2 character's quest flags (QuestFlags Ids), found by name.</summary>
+    public Result<Character> SetQuestFlags(string characterName, IReadOnlyList<string> flags)
+    {
+        lock (_gate)
+        {
+            var c = store.FindCharacter(characterName);
+            if (c is null) return Result<Character>.Fail(AuthError.NotFound);
+            var u = c with { QuestFlags = [.. flags.Distinct().Order()] };
+            store.UpdateCharacter(u);
+            return Result<Character>.Success(u);
+        }
+    }
+
+    /// <summary>Replaces a PoE2 character's activated waypoints (WorldAreas Ids), found by name.</summary>
+    public Result<Character> SetWaypoints(string characterName, IReadOnlyList<string> waypoints)
+    {
+        lock (_gate)
+        {
+            var c = store.FindCharacter(characterName);
+            if (c is null) return Result<Character>.Fail(AuthError.NotFound);
+            var u = c with { Waypoints = [.. waypoints.Distinct().Order()] };
+            store.UpdateCharacter(u);
+            return Result<Character>.Success(u);
+        }
+    }
+
+    /// <summary>Replaces a PoE2 character's allocated passive nodes (PassiveSkillGraphIds), found by name.</summary>
+    public Result<Character> SetPassives(string characterName, IReadOnlyList<int> nodes)
+    {
+        lock (_gate)
+        {
+            var c = store.FindCharacter(characterName);
+            if (c is null) return Result<Character>.Fail(AuthError.NotFound);
+            var u = c with { Passives = [.. nodes.Distinct().Order()] };
+            store.UpdateCharacter(u);
+            return Result<Character>.Success(u);
+        }
+    }
+
+    /// <summary>Replaces a PoE2 character's socketed skill gems (Poe2Gems.Encode), found by name (wave 30).</summary>
+    public Result<Character> SetGems(string characterName, IReadOnlyList<int> gems)
+    {
+        lock (_gate)
+        {
+            var c = store.FindCharacter(characterName);
+            if (c is null) return Result<Character>.Fail(AuthError.NotFound);
+            var u = c with { Gems = [.. gems.Distinct().Order()] };
+            store.UpdateCharacter(u);
+            return Result<Character>.Success(u);
+        }
+    }
+
+    /// <summary>Replaces a PoE2 character's saved inventory, found by name (wave 31).</summary>
+    public Result<Character> SetItems(string characterName, IReadOnlyList<SavedItem> items)
+    {
+        lock (_gate)
+        {
+            var c = store.FindCharacter(characterName);
+            if (c is null) return Result<Character>.Fail(AuthError.NotFound);
+            var u = c with { Items = [.. items] };
+            store.UpdateCharacter(u);
+            return Result<Character>.Success(u);
+        }
+    }
+
+    /// <summary>Sets a PoE2 character's total experience and gold, found by name (wave 29).</summary>
+    public Result<Character> SetProgress(string characterName, uint experience, uint gold)
+    {
+        lock (_gate)
+        {
+            var c = store.FindCharacter(characterName);
+            if (c is null) return Result<Character>.Fail(AuthError.NotFound);
+            var u = c with { Experience = experience, Gold = gold };
             store.UpdateCharacter(u);
             return Result<Character>.Success(u);
         }
