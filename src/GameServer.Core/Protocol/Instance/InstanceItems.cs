@@ -175,6 +175,11 @@ public sealed record Item(uint TypeHash, IReadOnlyList<string> Components, ushor
                 // IndexableSupportGems index (0: none).
                 // The network reader copies the flags byte verbatim; unlike the native copy it does not derive
                 // bit 5 from the variant. Normalize it here for both standalone and nested socket gems.
+                // PoE2's SkillGem (vtable 0x1435157d8, read 0x1421e7240; wave 30): i32 experience (-1 = the max level), u32
+                // (+0x34), u32 (+0x30), u8 flags (+0x10), u8 (+0x38), u16 (an IndexableSupportGems index, 0x1421e8490).
+                // PoE1's 11 bytes crashed the client ("buffer underflow", live 2026-11-05).
+                case "SkillGem" when Poe2: w.I32(GemExperience).U32(0).U32((uint)GemVariant)
+                    .U8((byte)((GemFlags & ~0x20) | (GemVariant > 0 ? 0x20 : 0))).U8(0).U16(0); break;
                 case "SkillGem": w.I32(GemExperience).U32((uint)GemVariant)
                     .U8((byte)((GemFlags & ~0x20) | (GemVariant > 0 ? 0x20 : 0))).U16(0); break;
                 // 0x1421e2e20: u8 = bit0/bit1 (special, nothing more) | socket count << 2 | link group count << 5; per socket

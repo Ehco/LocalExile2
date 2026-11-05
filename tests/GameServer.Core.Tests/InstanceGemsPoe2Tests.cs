@@ -68,15 +68,16 @@ public class InstanceGemsPoe2Tests
     }
 
     [Fact]
-    public void The_actor_update_flags_a_skill_list()
+    public void The_actor_update_adds_and_removes_skills()
     {
-        var skills = new[] { WarriorSkills[0] };
+        var skill = WarriorSkills[0];
 
-        byte[] m = InstanceGemsPoe2.ActorSkills(Player, skills);
+        byte[] m = InstanceGemsPoe2.ActorSkills(Player, [skill], [0x113]);
 
-        var list = new BlobWriter().U8(InstanceGemsPoe2.ActorHasSkills);
-        ActorSkillsPoe2.WriteList(list, skills);
-        Assert.Equal(InstanceProgressionPoe2.ComponentUpdate(Player, InstanceGemsPoe2.ActorComponent, list.ToArray()), m);
+        var change = new BlobWriter().U8(InstanceGemsPoe2.ActorHasSkills).U8(1).U8(1);
+        ActorSkillsPoe2.WriteRecord(change, skill);
+        change.U32(0x113).U8(0).U8(0);
+        Assert.Equal(InstanceProgressionPoe2.ComponentUpdate(Player, InstanceGemsPoe2.ActorComponent, change.ToArray()), m);
         Assert.Equal("02F9", Convert.ToHexString(m, 0, 2));
     }
 
@@ -127,6 +128,29 @@ public class InstanceGemsPoe2Tests
     }
 
     [Fact]
+    public void A_gem_skill_is_used_with_the_weapon_in_hand()
+    {
+        var club = new Poe2Items.ItemType("Metadata/Items/Weapons/OneHandWeapons/OneHandMaces/FourOneHandMace1", 2040, "Wooden Club",
+            1886603766, 2, 3, 1, 52869, ["Base", "Mods", "Weapon", "Sockets"], ItemClass: 12, Weapon: new(6, 10, 690, 13, 500),
+            Attack: new(400, 400), Wieldable: 5);
+        var armed = Poe2StartingSkills.For(Poe2Classes.Of(CharacterClass.Warrior), club);
+        var session = new InstanceSessionPoe2(new PlayerObjectPoe2(GridX: 200, GridY: 200, Life: 58, Mana: 48, ClassRow: 6, Skills: armed),
+            itemTypes: Types, gemTable: Table, startingUncutGem: true);
+        session.Handle(AreaGenerated, 0);
+
+        var reply = session.Handle(Cut((uint)RollingSlam.Row, MainInventory, session.MainInventory.Single().Id), 0);
+
+        // Live 2026-11-05: with source 0 the client greyed Rolling Slam as "[Not enough mana]" at full mana.
+        var skill = InstanceGemsPoe2.Skill(RollingSlam, 1, 0, InstanceGemsPoe2.HandOf(armed))!;
+        Assert.Equal(Poe2StartingSkills.WeaponSetOneSource, skill.Source);
+        Assert.Equal(armed[0].Stats, skill.Stats);
+        Assert.Equal(new AttackPoe2(6, 10, 690, 13), AttackPoe2.Of(skill));
+        Assert.Contains(InstanceGemsPoe2.ActorSkills(Player, [skill]), reply);
+        Assert.Equal((byte)0, InstanceGemsPoe2.HandOf(WarriorSkills).Source);   // unarmed: the Actor's own hands
+        Assert.Equal([Poe2Gems.Encode(589, 1, 0)], session.Gems);
+    }
+
+    [Fact]
     public void A_cut_the_server_cannot_place_changes_nothing()
     {
         var session = InWorld();
@@ -142,11 +166,12 @@ public class InstanceGemsPoe2Tests
     [Fact]
     public void Saved_gems_take_their_slots_on_entering()
     {
-        var session = InWorld(gems: [Poe2Gems.Encode(589, 1, 3)]);
+        var session = InWorld(gems: [Poe2Gems.Encode(589, 1, 3)], startingUncut: false);
 
         Assert.Equal([Poe2Gems.Encode(589, 1, 3)], session.Gems);
         Assert.Equal(RollingSlam.Hash, Assert.Single(session.SkillSlots).Item.TypeHash);
-        Assert.Empty(session.MainInventory);   // no uncut gem for a character with a gem
+        Assert.Empty(session.MainInventory);
+        Assert.Single(InWorld(gems: [Poe2Gems.Encode(589, 1, 3)], startingUncut: true).MainInventory);   // the knob gives one anyway
         Assert.Contains("00DE", Ids(session.EnterWorld()));
     }
 

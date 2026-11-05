@@ -53,7 +53,8 @@ public static class Poe2Items
     {
         if (!File.Exists(path)) return new Dictionary<string, ItemType>();
         var rows = JsonSerializer.Deserialize<ItemType[]>(File.ReadAllText(path), JsonOptions) ?? [];
-        return rows.ToDictionary(t => t.Id, StringComparer.OrdinalIgnoreCase);
+        // BaseItemTypes repeats a few Ids (FourOneHandSword1 ...): the first row keeps the Id.
+        return rows.GroupBy(t => t.Id, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
     }
 
     static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };

@@ -23,7 +23,8 @@ public sealed partial class InstanceSessionPoe2
 
     // The saved gems take their slots and become items (0xde on entering, after the starting weapon). A character with
     // none gets its class's starting gem (Characters StartSkillGem) socketed in slot 0 and saved, as a new PoE2
-    // character has it; the test knob startingUncutGem puts an Uncut Skill Gem (Level 1) in its inventory instead.
+    // character has it; the test knob startingUncutGem puts an Uncut Skill Gem (Level 1) in its inventory as well (once:
+    // not while one is there).
     // Called after InitLoot: the item types are needed.
     private void InitGems(IEnumerable<int>? gems, Poe2Gems? table, Action<IReadOnlyCollection<int>>? onGems, bool startingGem, bool startingUncutGem)
     {
@@ -34,14 +35,16 @@ public sealed partial class InstanceSessionPoe2
             _gems[(byte)slot] = (gem, Math.Max(1, level));
             if (SocketItem(gem) is { } change) _gemChanges.Add(change);
         }
-        if (startingGem && _gems.Count == 0 && _gemTable.StartingGem(_objectType) is { } first && InstanceGemsPoe2.Skill(first, 1, 0) is { } skill)
+        if (startingGem && _gems.Count == 0 && _gemTable.StartingGem(_objectType) is { } first
+            && InstanceGemsPoe2.Skill(first, 1, 0, InstanceGemsPoe2.HandOf(_player.Skills)) is { } skill)
         {
             _gems[0] = (first, 1);
             if (SocketItem(first) is { } change) _gemChanges.Add(change);
             _player = _player with { Skills = [.. (_player.Skills ?? []).Where(s => s.Id != skill.Id), skill] };
             _onGems?.Invoke(EncodedGems());
         }
-        if (startingUncutGem && _gems.Count == 0 && _gemTable.UncutFor(Poe2Gems.SkillKind, 1) is { } uncut
+        if (startingUncutGem && _gemTable.UncutFor(Poe2Gems.SkillKind, 1) is { } uncut
+            && !_mainInventory.Items.Any(e => e.Item.TypeHash == uncut.Hash)
             && _itemTypesByHash.GetValueOrDefault(uncut.Hash) is { } type
             && _mainInventory.Add(Poe2Items.Create(type), type.Width, type.Height, type.MaxStack) is { } given)
             _gemChanges.Add(given);
@@ -71,13 +74,13 @@ public sealed partial class InstanceSessionPoe2
             : Enumerable.Range(0, InstanceGemsPoe2.SkillSlotCount).Select(s => (byte)s).FirstOrDefault(s => !_gems.ContainsKey(s), (byte)255) is var s && s != 255 ? s : null;
         if (free is not { } slot) return [];
         int level = Math.Max(1, uncut.Tier);
-        if (InstanceGemsPoe2.Skill(gem, level, slot) is not { } skill) return [];
+        if (InstanceGemsPoe2.Skill(gem, level, slot, InstanceGemsPoe2.HandOf(_player.Skills)) is not { } skill) return [];
         var messages = new List<byte[]>();
         if (_mainInventory.Take(entry.Id, 1) is { } taken) messages.Add(taken);
         _gems[slot] = (gem, level);
         if (SocketItem(gem) is { } socketed) messages.Add(socketed);
         _player = _player with { Skills = [.. (_player.Skills ?? []).Where(s => s.Id != skill.Id), skill] };
-        messages.Add(InstanceGemsPoe2.ActorSkills(PlayerId, _player.Skills!));
+        messages.Add(InstanceGemsPoe2.ActorSkills(PlayerId, [skill]));
         messages.Add(InstanceProtocolPoe2.SkillList([(skill.Id, 0)], merge: true));
         _onGems?.Invoke(EncodedGems());
         ItemsChanged();

@@ -138,7 +138,8 @@ partial class Program
                     Life: (uint)sheet.MaximumLife, Mana: (uint)sheet.MaximumMana,
                     Stats: [.. sheet.Stats, .. Poe2StartingSkills.MainHandStats(row, weapon)],
                     Name: ticket.Character, ClassRow: row.Index, Experience: Math.Max(CharacterStats.ExperienceFor(ticket.Level), ticket.Experience),
-                    Skills: [.. Poe2StartingSkills.For(row, weapon), .. InstanceGemsPoe2.Skills(Poe2GemTable.Value, ticket.Gems ?? [])],
+                    Skills: [.. Poe2StartingSkills.For(row, weapon),
+                        .. InstanceGemsPoe2.Skills(Poe2GemTable.Value, ticket.Gems ?? [], InstanceGemsPoe2.HandOf(Poe2StartingSkills.For(row, weapon)))],
                     Visible: weapon is null ? null : [Poe2Items.Visible(weapon)]),
                     objectType: row.ObjectType, walkable: walkable, exits: exits, monsters: monsters,
                     levelStarts: CharacterStats.LevelStarts, onLevel: level => _ = SavePoe2Level(remote, opening.Ticket, level),
@@ -150,9 +151,9 @@ partial class Program
                     questPassivePoints: Poe2QuestPassivePoints, passiveNodes: Poe2PassiveNodes.Value,
                     gold: ticket.Gold == 0 ? Poe2StartingGold : ticket.Gold,
                     onProgress: (experience, gold) => _ = SavePoe2Progress(remote, opening.Ticket, experience, gold),
-                    gems: ticket.Gems, onGems: gems => _ = SavePoe2Gems(remote, opening.Ticket, gems), gemTable: Poe2GemTable.Value,
-                    startingGem: true, items: ticket.Items, onItems: items => _ = SavePoe2Items(remote, opening.Ticket, items),
-                    startingFlasks: true);
+                    gems: Poe2GemsOn ? ticket.Gems : null, onGems: gems => _ = SavePoe2Gems(remote, opening.Ticket, gems), gemTable: Poe2GemTable.Value,
+                    startingGem: Poe2GemsOn, startingUncutGem: Poe2UncutGem, items: ticket.Items, onItems: items => _ = SavePoe2Items(remote, opening.Ticket, items),
+                    startingFlasks: Poe2FlasksOn);
                 if (Poe2GemTable.Value.Count == 0)
                     Console.WriteLine($"[gateway] {remote} no {Poe2Gems.DefaultPath}: no gem skills, no uncut gems (scripts/re/poe2/gems.py)");
                 var clock = Stopwatch.StartNew();
@@ -243,6 +244,14 @@ partial class Program
     static readonly Lazy<Poe2Passives> Poe2PassiveNodes = new(() => Poe2Passives.Load());
 
     static readonly Lazy<Poe2Gems> Poe2GemTable = new(() => Poe2Gems.Load());
+
+    // Game_POE2_UNCUT_GEM=1 puts an Uncut Skill Gem (Level 1) in the inventory at each entry without one (to test the gem window).
+    static readonly bool Poe2UncutGem = Environment.GetEnvironmentVariable("Game_POE2_UNCUT_GEM") == "1";
+
+    // Game_POE2_GEMS=0 leaves the socketed gems out (saved and starting) and Game_POE2_FLASKS=0 the starting flasks: to
+    // bisect a client crash on an item's data (waves 30 and 32 are not verified live).
+    static readonly bool Poe2GemsOn = Environment.GetEnvironmentVariable("Game_POE2_GEMS") != "0";
+    static readonly bool Poe2FlasksOn = Environment.GetEnvironmentVariable("Game_POE2_FLASKS") != "0";
 
     // The whole inventory goes to Auth ("set_items") after each change (wave 31).
     static async Task SavePoe2Items(string remote, uint ticket, IReadOnlyList<SavedItem> items)
