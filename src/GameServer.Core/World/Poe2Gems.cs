@@ -13,8 +13,18 @@ public sealed class Poe2Gems
 {
     public sealed record Effect(int Row, string Id, uint Hash, string? ActiveSkill, string? SkillName);
 
-    /// <summary>One gem level: the GEPL row and the GESSPL rows (the effect's StatSet first, then its AdditionalStatSets).</summary>
-    public sealed record Level(int GemLevel, uint EffectsPerLevelRow, IReadOnlyList<uint> StatSetRows);
+    /// <summary>One gem level: the GEPL row and the GESSPL rows (the effect's StatSet first, then its AdditionalStatSets),
+    /// and its <see cref="Combat"/> values when gems.json has them.</summary>
+    public sealed record Level(int GemLevel, uint EffectsPerLevelRow, IReadOnlyList<uint> StatSetRows, Combat? Combat = null);
+
+    /// <summary>A gem level's combat values (gems.py): the main stat set's total_attack_time_+_ms and
+    /// attack_maximum_action_distance_+ (game units), and the hits in the order they land (Rolling Slam: the first slam,
+    /// then the second).</summary>
+    public sealed record Combat(int AddedAttackMs, int AddedReach, IReadOnlyList<Hit> Hits);
+
+    /// <summary>One hit: GESSPL BaseMultiplier in 1/10000 (−2500: 75 % of the damage, 5000: 150 %) and the area's radius
+    /// in game units (0 without one).</summary>
+    public sealed record Hit(int Multiplier, int Radius);
 
     public sealed record Gem(string Id, int Row, string Name, uint Hash, int SkillGemsRow, int GemEffectsRow, byte Colour,
         string Kind, int MinLevel, int Strength, int Dexterity, int Intelligence, Effect Effect, IReadOnlyList<Level> Levels)
@@ -83,7 +93,8 @@ public sealed class Poe2Gems
         {
             var fx = e.GetProperty("effect");
             var levels = e.GetProperty("levels").EnumerateArray()
-                .Select(l => new Level(l[0].GetInt32(), l[1].GetUInt32(), [.. l[2].EnumerateArray().Select(r => r.GetUInt32())])).ToList();
+                .Select(l => new Level(l[0].GetInt32(), l[1].GetUInt32(), [.. l[2].EnumerateArray().Select(r => r.GetUInt32())],
+                    l.GetArrayLength() > 3 ? ReadCombat(l[3]) : null)).ToList();
             gems.Add(new Gem(Str(e, "id"), e.GetProperty("row").GetInt32(), Str(e, "name"), e.GetProperty("hash").GetUInt32(),
                 Int(e, "skillGemsRow"), Int(e, "gemEffectsRow"), (byte)Int(e, "colour"), Str(e, "kind"), Int(e, "minLevel"),
                 Int(e, "strength"), Int(e, "dexterity"), Int(e, "intelligence"),
@@ -97,6 +108,11 @@ public sealed class Poe2Gems
             foreach (var s in list.EnumerateArray()) starting.TryAdd(Str(s, "character"), Int(s, "gem"));
         return new(gems, uncut, starting);
     }
+
+    static Combat ReadCombat(JsonElement c) => new(Int(c, "attackMs"), Int(c, "reach"),
+        c.TryGetProperty("hits", out var hits)
+            ? [.. hits.EnumerateArray().Select(h => new Hit(h[0].GetInt32(), h[1].GetInt32()))]
+            : []);
 
     static string Str(JsonElement e, string name) => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() ?? "" : "";
     static string? NullableStr(JsonElement e, string name) => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;

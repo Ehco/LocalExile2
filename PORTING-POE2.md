@@ -2295,3 +2295,64 @@ equipment).
 To check live: a dropped armour's look on the ground and in the inventory
 (the Armour component), a weapon's tooltip values, the inventory after a
 relog with gear in it.
+
+## Wave 30 follow-up — the gem window live, attacks at the ground (2026-11-05)
+
+Live test of wave 30 with `Game_POE2_UNCUT_GEM=1` (an Uncut Skill Gem
+(Level 1) in the inventory). Code: `InstanceItems.cs` (the SkillGem data),
+`InstanceGemsPoe2.ActorSkills` / `Hand` / `HandOf`, `Poe2Items.Load`,
+`InstanceSessionPoe2.Slams.cs`, `InstanceSkillsPoe2.ReadAim`,
+`Poe2Gems.Combat`, `gems.py` (the combat values).
+
+- **The cut request** came as `005F 00 3AA94A61 00000001 00000001`: the key
+  is the chosen gem's item **HASH32** (Rolling Slam's), then the main
+  inventory and the uncut gem's item id, in the builder's store order.
+  `Poe2Gems.Resolve` finds it by hash.
+- **Three crashes, three fixes:**
+  - "An unexpected disconnection occurred" on entering: `item-types.json`
+    repeats some ids (BaseItemTypes has duplicate Ids), so its dictionary
+    threw; `Poe2Items.Load` keeps the first of each id.
+  - "Buffer underflow" when cutting, with the Actor update first sent as the
+    whole create list: an update's skill change (`0x14218b780`, flags bit 3)
+    is u8 added, u8 removed, the added records, the removed u32 ids, then
+    u8 n × (u32, u32, u32) and u8 c × u8, both sent empty.
+  - "Buffer underflow" again, and on entering with a socketed gem: PoE2's
+    **SkillGem** item component (reader `0x1421e7240`, vtable `0x1435157d8`)
+    is 16 bytes, i32 experience, u32 (`+0x34`), u32 (`+0x30`), u8 flags
+    (`+0x10`), u8 (`+0x38`), u16 (a support index, `0x1421e8490`); we sent
+    PoE1's 11. Found by listing the item component readers by their read
+    pattern.
+- **Greyed "[Not enough mana]" at full mana** once cut: the decoy label of
+  wave 26. The gem's skill had source byte 0, so the client judged Rolling
+  Slam (a mace skill) with the Actor's default hands, unarmed. A gem's skill
+  now takes the starting skills' hand: the main hand's stats and source
+  `0x40` (weapon set I) with a weapon, 0 unarmed. Rolling Slam then lit up
+  and played (the roll and both slams) on use.
+- **Attacks at the ground.** Rolling Slam is used at the ground: `0x1a5`
+  without a target, the aim relative to the player (here (28, 48)). The
+  server echoed `0x1c8` but hit nothing, so the slams were harmless. Now a
+  ground attack queues its hits (`InstanceSessionPoe2.Slams.cs`):
+  - the data (`gems.py`, a fourth element per level in `gems.json`): the
+    main stat set's `total_attack_time_+_ms` (Rolling Slam 1000) and
+    `attack_maximum_action_distance_+` (20), and the hits: the main set's,
+    or the additional sets' when the main one has `base_deal_no_damage`
+    (Rolling Slam: First Slam, GESSPL BaseMultiplier −2500 = 75 %,
+    `active_skill_base_area_of_effect_radius` 14; Second Slam, 5000 = 150 %,
+    `active_skill_base_secondary_area_of_effect_radius` 18);
+  - ours: hit k of n lands at (k + 1)/(n + 1) of the attack time; the first
+    centre is the weapon's reach towards the aim, the later ones the reach
+    plus the action distance plus 3 cells of roll, where the player ends;
+    radii are game units / (250 / 23) per cell plus 2 cells of slack; each
+    monster inside takes the attack's roll times the multiplier.
+  - A basic attack at the ground (Default Attack, Mace Strike) hits once in
+    front of the player the same way.
+- **C→S `0x1a8`** (15 bytes: u8 route, i32 BE x, i32 BE y, u32 BE skill id)
+  comes every ~70 ms while the button of an action is held: the client's
+  re-aim, relative to the player. Framed now; the server keeps the use's
+  aim (during a roll the relative values shrink as the player moves, which
+  the server does not model).
+
+Not done: the hits are not tested live yet; a ground attack's hits are not
+cancelled by a move or a dodge; the skill's own damage stats (added damage,
+"more" multipliers other than BaseMultiplier) are not read; a gem used on a
+target object still hits that one only, at the weapon's damage.

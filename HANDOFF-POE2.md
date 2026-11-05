@@ -4,9 +4,10 @@ Read this first if you are picking up the PoE2 work. It covers where things stan
 from nothing, how to run a live test, and what to do next. The wave-by-wave findings (addresses, message layouts,
 live results) are in [PORTING-POE2.md](PORTING-POE2.md). This file points into it and does not repeat it.
 
-Last updated 2026-11-05, after wave 33 (equipment drops), **waves 29 to 33 are not tested live**:
-wave 28 (the passive skill tree) was, except the refund click (see "Wave 28 follow-ups"). First thing: run a live
-test of waves 29 to 33 (PORTING-POE2.md, their "To check live" lists).
+Last updated 2026-11-05, after the live test of wave 30 (the gem window): an uncut gem is cut and the skill gem's
+skill is usable (PORTING-POE2.md, "Wave 30 follow-up"); its hits at the ground are written but not seen live yet.
+Waves 29 and 31 to 33 are not tested live; wave 28 (the passive skill tree) was, except the refund click (see "Wave 28
+follow-ups"). First thing: check Rolling Slam's hits live, then the "To check live" lists of waves 29 to 33.
 
 ## Where it stands
 
@@ -44,10 +45,10 @@ passive tree allocates and refunds nodes, saves them, and their stats reach the 
 | NPCs, dialogue, quest flags, waypoints | The town's NPCs, waypoint, stash and well are drawn; a click on an NPC opens its dialogue (`0xa3`), its options (`0xa1` / `0xa4`) set the quest flags (start, finish and Script flags) and play their talks, Buy opens an empty buy window (`0xaf`). The flags are saved per character (Auth), sent as a Player update (`0x2f9`) and recompute the NPCs' states (objects created again). The waypoint activates (town, click, 25 cells; `0x5a`), opens the World panel (`0x98`) and travels (`0x5b` → `0x2f1`, arrival by the waypoint), all live. No shop stock | `ServerObjectPoe2.cs`, `Poe2ServerObjects.cs`, `Poe2Quests.cs`, `InstanceSessionPoe2.Npcs.cs`, `InstanceSessionPoe2.Quests.cs`, `InstanceNpcsPoe2.cs`, `InstanceQuestsPoe2.cs`, `InstanceWaypointsPoe2.cs`, `scripts/re/poe2/server_objects.py`, `quests.py`; wave 27 |
 | Flasks | A new character has a Lesser Life and a Lesser Mana Flask (inventory 12); a use (`0x70`) spends charges and recovers over the flask's time (`0x1cf`); kills give charges, resurrecting refills; untested live | `InstanceFlasksPoe2.cs`, `InstanceSessionPoe2.Flasks.cs`; wave 32 |
 | Inventory moves | A click picks an item up to the cursor (`0x39`), a click with an item held places it (`0x38`: free cell, stack merge, swap, Shift for one); main inventory and cursor only, untested live | `InstanceItemsPoe2.cs`, `InstanceSessionPoe2.Items.cs`, `Poe2Inventory.cs`; wave 31 |
-| Skill gems | A skill gem in the skill slots inventory (63) grants its skill (Actor skill list, `0x66`); the gem window's cut (`0x5f` / `0x60`) turns an uncut gem of the inventory into one; the gems are saved (`set_gems`); a new character starts with its class's gem (Characters StartSkillGem) and kills drop uncut gems. Untested live; supports and spirit gems refused | `Poe2Gems.cs`, `InstanceGemsPoe2.cs`, `InstanceSessionPoe2.Gems.cs`, `scripts/re/poe2/gems.py`, `cs_sigs.py`; wave 30 |
+| Skill gems | A skill gem in the skill slots inventory (63) grants its skill (Actor skill list, `0x66`); the gem window's cut (`0x5f` / `0x60`) turns an uncut gem of the inventory into one; the gems are saved (`set_gems`); a new character starts with its class's gem (Characters StartSkillGem) and kills drop uncut gems. The cut and the skill's use work live (2026-11-05); its hits at the ground (two slams for Rolling Slam, `gems.json` combat values) are not seen live yet; supports and spirit gems refused | `Poe2Gems.cs`, `InstanceGemsPoe2.cs`, `InstanceSessionPoe2.Gems.cs`, `scripts/re/poe2/gems.py`, `cs_sigs.py`; wave 30 |
 | Passive skill tree | The tree screen shows the character's nodes (`0x3a`), allocates (`0x3c`, with the attribute chosen); the allocations are saved per character (Auth `set_passives`) and their stats fold into the sheet (`0x1d3`). Points: (level − 1) + `Game_POE2_PASSIVE_POINTS`. The gold goes out (`0x2db`, `Game_POE2_GOLD`) and refunds (`0x3e`, `0x48`) cost GoldRespecPrices' gold server-side, but the client does not let a refund click through yet; no quest rewards, weapon sets, jewels or ascendancies | `InstancePassivesPoe2.cs`, `InstanceSessionPoe2.Passives.cs`, `Poe2Passives.cs`, `Poe2CharacterStats.cs`, `scripts/re/poe2/passives.py`, `scripts/re/frida/poe2-trace-refund.js`; wave 28 |
 
-**Tests.** 737/737 pass:
+**Tests.** 743/743 pass:
 
 ```bash
 dotnet test tests/GameServer.Core.Tests -c Release
@@ -383,9 +384,10 @@ catalogue's `0x0` from `0x140479b20`, "2 1 4 4 1 1 1 1", is the candidate); the 
 
 ## Wave 30 follow-ups (skill gems)
 
-The findings are in PORTING-POE2.md, wave 30. Nothing tested live. In order: see what the gem window sends (the
-`0x5f` chunk in the Gateway's trace) and fix `Poe2Gems.Resolve` / the field order; check the skill gem item in
-inventory 63 (the SkillGem component's data) and the Actor update (component 8, flags `0x08`); then support gems
+The findings are in PORTING-POE2.md, wave 30 and its follow-up. The cut (`0x5f` sends the gem's HASH32), the skill
+gem item (16-byte SkillGem data) and the Actor update work live. Next: see Rolling Slam's two slams land (the
+`0x1cf` on the zombies), then the skill's own damage stats, the starting gem and flasks together on entering
+(`Game_POE2_GEMS`, `Game_POE2_FLASKS`, both on by default); then support gems
 (the Sockets component of a skill gem, the support's effect on the skill), spirit gems, gem levels above 1 (uncut
 tiers, `0x72`-like level-up messages are not mapped), the gem window's requirements (attributes, level).
 
@@ -458,7 +460,7 @@ In rough order. Each is a wave of its own.
 | 26 (follow-up) | The weapon's own attack usable | `8e206dd` |
 | 28 | The passive skill tree | `a141524` |
 | 29 | Experience and gold saved, gold piles (untested live) | `0c6155e` |
-| 30 | Skill gems (untested live) | `140eb42`, `7c7701f` |
+| 30 | Skill gems; the cut and the skill live, its hits at the ground written | `140eb42`, `7c7701f`, the two commits after `32a302c` |
 | 31 | Inventory moves, saved inventory (untested live) | `f0fdf2f` |
 | 32 | Flasks (untested live) | `957a5fa` |
-| 33 | Equipment drops, white (untested live) | the commit after `957a5fa` |
+| 33 | Equipment drops, white (untested live) | `32a302c` |

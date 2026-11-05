@@ -36,6 +36,19 @@ public static class InstanceSkillsPoe2
         return w.ToArray();
     }
 
+    public const ushort AimId = 0x1a8;
+    public const int AimLength = 15;
+
+    /// <summary>
+    /// C→S 0x1a8 (15 bytes), sent every ~70 ms while the button of an action in progress is held (live 2026-11-05,
+    /// Rolling Slam): u8 route, i32 BE x, i32 BE y (relative to the player, as 0x1a5's without a target), u32 BE the
+    /// skill id. The client's re-aim of the action. Null for any other message.
+    /// </summary>
+    public static (uint SkillId, int X, int Y)? ReadAim(ReadOnlySpan<byte> m) =>
+        m.Length == AimLength && BinaryPrimitives.ReadUInt16BigEndian(m) == AimId
+            ? (BinaryPrimitives.ReadUInt32BigEndian(m[11..]), BinaryPrimitives.ReadInt32BigEndian(m[3..]), BinaryPrimitives.ReadInt32BigEndian(m[7..]))
+            : null;
+
     /// <summary>The C→S 0x1a5 option bit for a target object id.</summary>
     public const byte TargetOption = 0x08;
 

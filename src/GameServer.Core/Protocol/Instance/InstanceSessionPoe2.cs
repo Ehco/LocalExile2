@@ -38,7 +38,7 @@ public sealed partial class InstanceSessionPoe2
         [InstancePassivesPoe2.ConfirmAltId] = InstancePassivesPoe2.ConfirmLength, [0x16] = 7, [0x137] = 4,
         [InstanceGemsPoe2.CutGemId] = InstanceGemsPoe2.CutGemLength, [InstanceGemsPoe2.CutGemIntoSlotId] = InstanceGemsPoe2.CutGemIntoSlotLength,
         [InstanceItemsPoe2.PickUpId] = InstanceItemsPoe2.PickUpLength, [InstanceItemsPoe2.PlaceId] = InstanceItemsPoe2.PlaceLength,
-        [InstanceFlasksPoe2.UseFlaskId] = InstanceFlasksPoe2.UseFlaskLength,
+        [InstanceFlasksPoe2.UseFlaskId] = InstanceFlasksPoe2.UseFlaskLength, [InstanceSkillsPoe2.AimId] = InstanceSkillsPoe2.AimLength,
         [0x173] = 3, [0x17a] = 3, [0x1ac] = 3,
         [0x221] = 3, [0x23d] = 4, [InstanceProtocolPoe2.PauseRequestId] = 4, [0x2e6] = 4, [0x357] = 3,
         [InstanceProtocolPoe2.LeavingId] = 3,
@@ -76,7 +76,7 @@ public sealed partial class InstanceSessionPoe2
     /// <param name="gems">The character's socketed skill gems (<see cref="Poe2Gems.Encode"/>), from its save;
     /// <paramref name="onGems"/> gets each new whole list to save; <paramref name="gemTable"/> gives their skills;
     /// <paramref name="startingGem"/> sockets the class's starting gem for a character with no gem (as PoE2 does);
-    /// <paramref name="startingUncutGem"/> puts an Uncut Skill Gem (Level 1) in its inventory instead (for tests).</param>
+    /// <paramref name="startingUncutGem"/> puts an Uncut Skill Gem (Level 1) in its inventory as well (for tests).</param>
     /// <param name="items">The character's saved inventory (<see cref="SavedItem"/>); <paramref name="onItems"/> gets the
     /// whole inventory to save after each change (a pickup, a move, a gem cut). <paramref name="startingFlasks"/> gives a
     /// character without flasks the two a new PoE2 character has.</param>
@@ -198,14 +198,18 @@ public sealed partial class InstanceSessionPoe2
             return [InstanceSkillsPoe2.ActionStarted(PlayerId, x, y, use.X, use.Y, use.SkillId, use.Flags, target)];
         }
         // An attack at the ground (x, y relative to the player) waits for the server too: unanswered, the client sent no
-        // further use (live 2026-11-04). The dodge roll runs by itself and gets no answer.
+        // further use (live 2026-11-04). It hits the monsters in its area (InstanceSessionPoe2.Slams.cs). The dodge roll
+        // runs by itself and gets no answer.
         if (InWorld && InstanceSkillsPoe2.ReadUseSkill(message, out _) is { TargetId: null } ground &&
-            _player.Skills?.FirstOrDefault(s => s.Id == ground.SkillId) is { } groundSkill && AttackPoe2.Of(groundSkill) is not null)
+            _player.Skills?.FirstOrDefault(s => s.Id == ground.SkillId) is { } groundSkill && AttackPoe2.Of(groundSkill) is { } groundAttack)
         {
             CancelAttack(now);
             var (x, y) = Walk.Cell(now);
+            BeginAreaAttack(ground.SkillId, groundAttack, (x, y), (ground.X, ground.Y), now);
             return [InstanceSkillsPoe2.ActionStarted(PlayerId, x, y, x + ground.X, y + ground.Y, ground.SkillId, ground.Flags)];
         }
+        // Anything else gets no answer, the re-aims of an action in progress among them (C→S 0x1a8, every ~70 ms while
+        // the button is held), which the server does not follow.
         return [];
     }
 
@@ -263,14 +267,19 @@ public sealed partial class InstanceSessionPoe2
         _attack = null;
         if (a.Stop != a.From) Walk.Place(a.Stop.X, a.Stop.Y, now);
         if (_monsterLife[a.Monster] <= 0) yield break;
-        int damage = _random.Next(a.Attack.MinimumDamage, a.Attack.MaximumDamage + 1);
-        _monsterLife[a.Monster] = Math.Max(0, _monsterLife[a.Monster] - damage);
+        foreach (var m in DamageMonster(a.Monster, _random.Next(a.Attack.MinimumDamage, a.Attack.MaximumDamage + 1), now)) yield return m;
+    }
+
+    // A hit of `damage` on the i-th monster: its new life (0x1cf) and, at 0, its death's experience, drop and flask charges.
+    private IEnumerable<byte[]> DamageMonster(int i, int damage, double now)
+    {
+        _monsterLife[i] = Math.Max(0, _monsterLife[i] - damage);
         // At 0 the client stops refreshing the mini life bar (as PoE1): hide it.
-        if (_monsterLife[a.Monster] == 0)
-            yield return InstanceCombatPoe2.StatsUpdate(MonsterId(a.Monster), [(InstanceCombatPoe2.HideMiniLifeBar, 1)]);
-        yield return InstanceCombatPoe2.LifeUpdate(MonsterId(a.Monster), _monsterLife[a.Monster]);
-        if (_monsterLife[a.Monster] == 0)
-            foreach (var m in GainExperience(a.Monster).Concat(DropLoot(a.Monster, now)).Concat(FlaskChargesOnKill())) yield return m;
+        if (_monsterLife[i] == 0)
+            yield return InstanceCombatPoe2.StatsUpdate(MonsterId(i), [(InstanceCombatPoe2.HideMiniLifeBar, 1)]);
+        yield return InstanceCombatPoe2.LifeUpdate(MonsterId(i), _monsterLife[i]);
+        if (_monsterLife[i] == 0)
+            foreach (var m in GainExperience(i).Concat(DropLoot(i, now)).Concat(FlaskChargesOnKill())) yield return m;
     }
 
     // Skill bar: slot → skill id, as the client set it (C→S 0x5c).
@@ -301,6 +310,7 @@ public sealed partial class InstanceSessionPoe2
         {
             if (!InWorld || LeavingTo is not null) return [];
             var sent = AttackTick(now).ToList();
+            sent.AddRange(AreaHitTick(now));
             sent.AddRange(PickupTick(now));
             sent.AddRange(TalkTick(now));
             sent.AddRange(WaypointTick(now));

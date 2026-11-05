@@ -30,15 +30,44 @@ OUT = os.path.join(REPO, "data", "poe2", "gems.json")
 PREFIXES = ("Metadata/Items/Gems/", "Metadata/Items/Gem/")
 
 
+def combat(stat_sets, stat_ids, multipliers, set_rows, level_rows):
+    """A gem level's combat values: the main stat set's added attack time (total_attack_time_+_ms) and action distance
+    (attack_maximum_action_distance_+), and its hits as [BaseMultiplier (1/10000, more or less damage), area radius
+    (game units, 0 without one)]: the main set's, or the additional sets' when the main one deals no damage (Rolling
+    Slam's first and second slam)."""
+    def constants(s):
+        st = stat_sets[s]
+        return {stat_ids[k]: v for k, v in zip(st["ConstantStats"] or [], st["ConstantStatsValues"] or [])}
+
+    def implicit(s):
+        return {stat_ids[k] for k in stat_sets[s]["ImplicitStats"] or []}
+
+    main = constants(set_rows[0])
+    damaging = [(s, r) for s, r in zip(set_rows, level_rows) if r is not None]
+    if "base_deal_no_damage" in implicit(set_rows[0]) and len(damaging) > 1:
+        damaging = damaging[1:]
+    else:
+        damaging = damaging[:1]
+    hits = []
+    for s, r in damaging:
+        c = constants(s)
+        radius = c.get("active_skill_base_area_of_effect_radius") or c.get("active_skill_base_secondary_area_of_effect_radius") or 0
+        hits.append([multipliers.get(r, 0), radius])
+    return {"attackMs": main.get("total_attack_time_+_ms", 0), "reach": main.get("attack_maximum_action_distance_+", 0), "hits": hits}
+
+
 def main():
     bases, gems, effects = dat.table("BaseItemTypes"), dat.table("SkillGems"), dat.table("GrantedEffects")
     gem_effects, active = dat.table("GemEffects"), dat.table("ActiveSkills")
     per_level = {}
     for r in dat.table("GrantedEffectsPerLevel"):
         per_level.setdefault(r["GrantedEffect"], {})[r["Level"]] = r["_row"]
-    stat_rows = {}
+    stat_rows, multipliers = {}, {}
     for r in dat.table("GrantedEffectStatSetsPerLevel"):
         stat_rows[(r["StatSet"], r["GemLevel"])] = r["_row"]
+        multipliers[r["_row"]] = r["BaseMultiplier"]
+    stat_ids = [s["Id"] for s in dat.table("Stats")]
+    stat_sets = dat.table("GrantedEffectStatSets")
     skills = []
     for g in gems:
         base = bases[g["BaseItemType"]]
@@ -55,7 +84,9 @@ def main():
             sets = [stat_rows.get((s, level)) for s in [e["StatSet"], *(e["AdditionalStatSets"] or [])]]
             if sets[0] is None:
                 continue
-            levels.append([level, gepl, [s for s in sets if s is not None]])
+            rows = [s for s in sets if s is not None]
+            levels.append([level, gepl, rows, combat(stat_sets, stat_ids, multipliers,
+                                                     [e["StatSet"], *(e["AdditionalStatSets"] or [])], sets)])
         if not levels:
             continue
         skills.append({"id": base["Id"], "row": base["_row"], "name": base["Name"], "hash": base["HASH32"],
