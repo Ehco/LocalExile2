@@ -16,7 +16,7 @@ public class LoginMessagePoe2Tests
         (LoginDirection.ClientToServer, new PlayPoe2(0x80, [new(1, 2), new(3, 4)])),
         (LoginDirection.ClientToServer, new CharacterDetailRequestPoe2(7, 2)),
         (LoginDirection.ServerToClient, new U32U16U16(0x16, 7, 0x1234, 0x5678)),
-        (LoginDirection.ServerToClient, new InstanceInfo("127.0.0.1", 6112, 1, 0xabcd, 2, B(64, 0x11), B(8, 0x22), 0)),
+        (LoginDirection.ServerToClient, new InstanceInfoPoe2("127.0.0.1", 6112, 1, 0xabcd, [0x61, 0x62], 2, B(64, 0x11), B(8, 0x22), 0)),
     ];
 
     private static CharacterEntryPoe2 Entry(string name) => new(name, "Standard", 0, 0, 12, 0, 3, 0, 1, 0, 0, 0, 0);
@@ -139,12 +139,37 @@ public class LoginMessagePoe2Tests
     }
 
     [Fact]
-    public void Instance_info_keeps_the_poe1_layout()
+    public void Instance_info_has_a_length_prefixed_field_between_the_area_and_the_ticket()
     {
-        // Reader 0x14214ee60: str host, u16 port, u32, u16 area hash, u32, bytes[64], bytes[8], u8 — PoE1's 0x14.
-        byte[] wire = LoginMessage.Encode(new InstanceInfo("h", 6112, 1, 0xabcd, 2, B(64, 0x11), B(8, 0x22), 3));
+        // 0.5.5f (PORTING-POE2.md, wave 35): str host, u16 port, u32, u16 area hash, u16 length + bytes, u32 ticket,
+        // bytes[64], bytes[8], u8. 0.5.5e had PoE1's 0x14, without the length-prefixed field.
+        byte[] wire = LoginMessage.Encode(new InstanceInfoPoe2("h", 6112, 1, 0xabcd, [], 2, B(64, 0x11), B(8, 0x22), 3));
+
+        Assert.Equal("0014" + "0001" + "68" + "17E0" + "00000001" + "ABCD" + "0000" + "00000002" +
+            Convert.ToHexString(B(64, 0x11)) + Convert.ToHexString(B(8, 0x22)) + "03", Convert.ToHexString(wire));
         Assert.True(LoginCodec.TryDecode(LoginDirection.ServerToClient, wire, out var m, out _, LoginDialect.Poe2));
-        Assert.Equal(0xabcd, Assert.IsType<InstanceInfo>(m).AreaHash);
+        var info = Assert.IsType<InstanceInfoPoe2>(m);
+        Assert.Equal(0xabcd, info.AreaHash);
+        Assert.Equal(2u, info.U32_38);
+    }
+
+    [Fact]
+    public void Instance_info_reads_its_ticket_after_the_length_prefixed_field()
+    {
+        // What the 0.5.5f client did with PoE1's layout on 2026-11-10: the ticket's first two bytes read as the
+        // field's length, so the message ran 2 + length bytes further and the ticket came from what followed.
+        byte[] poe1 = LoginMessage.Encode(new InstanceInfo("h", 6112, 1, 0xabcd, 0x00030000, B(64, 0x11), B(8, 0x22), 3));
+        byte[] follows = [0xde, 0xad, 0xbe, 0xef, .. B(64, 0x33), .. B(8, 0x44), 0x05];
+        // Length 3: the field takes the ticket's last two bytes and the first key byte, the ticket is read from the
+        // key, and the message ends 2 + 3 bytes into what follows.
+        byte[] wire = [.. poe1, .. follows];
+
+        Assert.True(LoginCodec.TryDecode(LoginDirection.ServerToClient, wire, out var m, out int consumed, LoginDialect.Poe2));
+
+        var info = Assert.IsType<InstanceInfoPoe2>(m);
+        Assert.Equal([0x00, 0x00, 0x11], info.Blob);
+        Assert.Equal(0x11111111u, info.U32_38);
+        Assert.Equal(poe1.Length + 2 + 3, consumed);
     }
 
     [Fact]

@@ -47,6 +47,7 @@ sealed class InstanceDirectory(InstanceRegistry registry, AccountService? accoun
                     LoginResult result => result with { Digest = [], Data = [] },
                     LoginResultPoe2 result => result with { Digest = [], Data = [] },
                     InstanceInfo info => info with { Key64 = [] },   // the instance connection's key
+                    InstanceInfoPoe2 info => info with { Key64 = [] },
                     _ => message,
                 };
                 Console.WriteLine($"[auth] {peer} => {LoginMessageFormat.Describe(logged)}");

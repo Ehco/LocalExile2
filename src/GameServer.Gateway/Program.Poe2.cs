@@ -87,7 +87,8 @@ partial class Program
                         opening = InstanceOpeningPoe2.TryRead([.. pending]);
                     }
                 }
-                Console.WriteLine($"[gateway] {remote} PoE2 opening: ticket=0x{opening.Ticket:x8} flag={opening.Flag}");
+                Console.WriteLine($"[gateway] {remote} PoE2 opening: ticket=0x{opening.Ticket:x8} address=0x{opening.Address:x8} " +
+                    $"digest={Convert.ToHexString(opening.Digest)} time={opening.Time} flag={opening.Flag}");
                 var ticket = await ResolvePoe2Ticket(remote, opening.Ticket);
                 var (area, seed, instance) = (ticket.Area, ticket.Seed, ticket.Instance);
 

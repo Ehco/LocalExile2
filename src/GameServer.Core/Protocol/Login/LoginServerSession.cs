@@ -49,7 +49,7 @@ public sealed class LoginServerSession(AccountService accounts)
         U32Message { MessageId: 0x18 } m => Session is null ? [] : [CharacterListPoe2(_poe2RecordId = m.Value)],
         // Play: a byte and one pair per local player slot; the first pair's A is the character's index in the 0x15 list
         // (0x1420e9ff0), its B the record id.
-        PlayPoe2 m => EnterGame(m.Pairs is [var first, ..] ? first.A : 0, () => CharacterListPoe2(_poe2RecordId)),
+        PlayPoe2 m => EnterGame(m.Pairs is [var first, ..] ? first.A : 0, () => CharacterListPoe2(_poe2RecordId), poe2: true),
         CharacterDetailRequestPoe2 m => CharacterDetail(m),
         CreateCharacterPoe2 m => CreatePoe2(m),
         _ => [],
@@ -150,7 +150,7 @@ public sealed class LoginServerSession(AccountService accounts)
     /// instance 0x0F. The 64 key bytes become the instance connection's Salsa20 key material (Agents/docs/re/010). Data8 goes
     /// into the 0x0E digest and stays zero.
     /// </summary>
-    private ILoginMessage[] EnterGame(uint index, Func<ILoginMessage> characterList)
+    private ILoginMessage[] EnterGame(uint index, Func<ILoginMessage> characterList, bool poe2 = false)
     {
         if (Session is null) return [];
         var characters = accounts.Characters(Session.AccountId);
@@ -167,12 +167,10 @@ public sealed class LoginServerSession(AccountService accounts)
         CharacterClass = chosen.Class;
         CharacterLevel = chosen.Level;
         CharacterLastTown = chosen.LastTown;
-        if (Assign is not null)
-        {
-            var (area, assigned) = Assign(this);
-            return [InstanceAssignment(area, assigned)];
-        }
-        return [InstanceAssignment(0x235c, Keyring.NewTicket())];
+        var (area, ticket) = Assign is not null ? Assign(this) : ((ushort)0x235c, Keyring.NewTicket());
+        InstanceInfo assignment = InstanceAssignment(area, ticket);
+        // The PoE2 client's 0x14 has one more field (0.5.5f).
+        return [poe2 ? InstanceInfoPoe2.From(assignment) : assignment];
     }
 
     /// <summary>The character chosen with Play (0x0e), once in game.</summary>

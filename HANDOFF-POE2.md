@@ -4,10 +4,16 @@ Read this first if you are picking up the PoE2 work. It covers where things stan
 from nothing, how to run a live test, and what to do next. The wave-by-wave findings (addresses, message layouts,
 live results) are in [PORTING-POE2.md](PORTING-POE2.md). This file points into it and does not repeat it.
 
-Last updated 2026-11-05, after the live test of wave 30 (the gem window): an uncut gem is cut and the skill gem's
+Last updated 2026-11-10. **The game is now 0.5.5f and the Gateway does not serve it yet.** Steam replaced 0.5.5e on
+2026-11-06 and the 0.5.5e client no longer starts on the updated data. On 0.5.5f the patcher, the whole login and the
+instance connection work, the area is generated, and the client stops on the loading screen at the first S→C `0x2f7`:
+instance message ids moved (PORTING-POE2.md, waves 34 and 35). First thing: the 0.5.5f ids of the instance messages.
+Everything below describes 0.5.5e, where it was last seen working.
+
+Before that (2026-11-05): the live test of wave 30 (the gem window): an uncut gem is cut and the skill gem's
 skill is usable (PORTING-POE2.md, "Wave 30 follow-up"); its hits at the ground are written but not seen live yet.
 Waves 29 and 31 to 33 are not tested live; wave 28 (the passive skill tree) was, except the refund click (see "Wave 28
-follow-ups"). First thing: check Rolling Slam's hits live, then the "To check live" lists of waves 29 to 33.
+follow-ups"). Then: check Rolling Slam's hits live, and the "To check live" lists of waves 29 to 33.
 
 ## Where it stands
 
@@ -48,7 +54,7 @@ passive tree allocates and refunds nodes, saves them, and their stats reach the 
 | Skill gems | A skill gem in the skill slots inventory (63) grants its skill (Actor skill list, `0x66`); the gem window's cut (`0x5f` / `0x60`) turns an uncut gem of the inventory into one; the gems are saved (`set_gems`); a new character starts with its class's gem (Characters StartSkillGem) and kills drop uncut gems. The cut and the skill's use work live (2026-11-05); its hits at the ground (two slams for Rolling Slam, `gems.json` combat values) are not seen live yet; supports and spirit gems refused | `Poe2Gems.cs`, `InstanceGemsPoe2.cs`, `InstanceSessionPoe2.Gems.cs`, `scripts/re/poe2/gems.py`, `cs_sigs.py`; wave 30 |
 | Passive skill tree | The tree screen shows the character's nodes (`0x3a`), allocates (`0x3c`, with the attribute chosen); the allocations are saved per character (Auth `set_passives`) and their stats fold into the sheet (`0x1d3`). Points: (level − 1) + `Game_POE2_PASSIVE_POINTS`. The gold goes out (`0x2db`, `Game_POE2_GOLD`) and refunds (`0x3e`, `0x48`) cost GoldRespecPrices' gold server-side, but the client does not let a refund click through yet; no quest rewards, weapon sets, jewels or ascendancies | `InstancePassivesPoe2.cs`, `InstanceSessionPoe2.Passives.cs`, `Poe2Passives.cs`, `Poe2CharacterStats.cs`, `scripts/re/poe2/passives.py`, `scripts/re/frida/poe2-trace-refund.js`; wave 28 |
 
-**Tests.** 748/748 pass:
+**Tests.** 749/749 pass:
 
 ```bash
 dotnet test tests/GameServer.Core.Tests -c Release
@@ -114,8 +120,9 @@ Once per machine. Everything generated here lives in `data/`, which git ignores.
    326410). The exe SHA-256 is `d46f4c27576122afc41a428eef96b3b4c75592a16827ed8c2204508ab06a455d`. A Steam update
    moves every address in PORTING-POE2.md.
    - **Steam moved to 0.5.5f on 2026-11-06** (SHA-256 `7e0d3665…947c834e`), and the 0.5.5e patched exe does not
-     start on the updated data. `keygen` / `patch` take the 0.5.5f exe (wave 34) and the 0.5.5e keys stay valid, but
-     nothing else is ported: the addresses, the message ids and the `.datc64` readers are still 0.5.5e's.
+     start on the updated data. `keygen` / `patch` take the 0.5.5f exe (wave 34) and the 0.5.5e keys stay valid; the
+     login and the data generators are good for 0.5.5f (wave 35). The addresses and the instance message ids are still
+     0.5.5e's. After a game update, `scripts/re/poe2/table_changes.py` says what moved in the data.
    - `poe2-walkmap.js` checks the bytes of the functions it hooks and refuses to run on another build.
    - `poe2-track-player.js` does not check them, and only attaches to a process named `PathOfExileSteam_le2.exe`.
 3. **Server keys and patched client.** Run from the repo root, with `<install>` the PoE2 folder (here
@@ -467,4 +474,5 @@ In rough order. Each is a wave of its own.
 | 31 | Inventory moves, saved inventory (untested live) | `f0fdf2f` |
 | 32 | Flasks (untested live) | `957a5fa` |
 | 33 | Equipment drops, white (untested live) | `32a302c` |
-| 34 | The 0.5.5f client's key layout (the patched exe not started yet) | the commit after `4047e6d` |
+| 34 | The 0.5.5f client's key layout | `a911858` |
+| 35 | 0.5.5f live: login `0x14`, the data; stops at the first `0x2f7` | the commit after `a911858` |

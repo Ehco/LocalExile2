@@ -268,3 +268,26 @@ public sealed record LeagueListPoe2(long ServerTime, IReadOnlyList<LeagueEntryPo
         return new(t, list, (f & 1) != 0, (f & 2) != 0);
     }
 }
+
+/// <summary>
+/// S→C 0x14 on PoE2 since 0.5.5f (PORTING-POE2.md, wave 35): PoE1's <see cref="InstanceInfo"/> with a length-prefixed
+/// field (u16 length, bytes) between the area hash and the ticket. 0.5.5e had PoE1's layout. Found live, not in the
+/// client's code: given PoE1's layout, the 0.5.5f client read the ticket's first two bytes as a length, kept waiting for
+/// that many bytes ("Contacting Server..."), and took the ticket from what followed. What the field holds is not known;
+/// the client accepts an empty one.
+/// </summary>
+public sealed record InstanceInfoPoe2(string Host, ushort U16_30, uint U32_34, ushort AreaHash, byte[] Blob, uint U32_38,
+    byte[] Key64, byte[] Data8, byte U8_86) : ILoginMessage
+{
+    public const ushort Id = InstanceInfo.Id;
+    public ushort MessageId => Id;
+
+    /// <summary>The same assignment for the PoE2 client, with the added field empty.</summary>
+    public static InstanceInfoPoe2 From(InstanceInfo info) =>
+        new(info.Host, info.U16_30, info.U32_34, info.AreaHash, [], info.U32_38, info.Key64, info.Data8, info.U8_86);
+
+    public void WriteFields(LoginWriter w) =>
+        w.Str(Host).U16(U16_30).U32(U32_34).U16(AreaHash).Blob(Blob).U32(U32_38).Fixed(Key64, 64).Fixed(Data8, 8).U8(U8_86);
+    internal static InstanceInfoPoe2 Read(ushort id, ref LoginReader r) =>
+        new(r.Str(), r.U16(), r.U32(), r.U16(), r.Blob(), r.U32(), r.Fixed(64), r.Fixed(8), r.U8());
+}

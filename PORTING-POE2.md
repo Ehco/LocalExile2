@@ -2394,3 +2394,74 @@ and in `scripts/re/poe2/`, `scripts/walkmaps/` and `scripts/re/frida/` is a
 builds; the `.datc64` readers are not rerun on the new data; the patched
 0.5.5f exe has not been started. `scripts/re/poe2_login_keys.py` still
 checks the 0.5.5e offsets.
+
+## Wave 35 — 0.5.5f live: the login's `0x14`, the data, where it stops (2026-11-10)
+
+First runs of the patched 0.5.5f client against Auth and the Gateway, and
+the generators rerun on the 0.5.5f bundles. No address of the 0.5.5f exe was
+looked up: everything here comes from the client's behaviour and its log.
+
+**Unchanged from 0.5.5e, seen live:**
+- the handshake with our keys, and login `0x05`, `0x04`, `0x1b`, `0x18`,
+  `0x15`, `0x10` / `0x11`, `0x0e` (the three characters are listed, Play is
+  sent);
+- the instance opening `0x0F` / `0x0E` (29 bytes, flag 4), the `0x11` answer
+  and the keying, the area message `0x1e` (the client logs `Generating level
+  15 area "G1_town" with seed 1`, tile hash `0x3533f5d5`), C→S `0x9a`, S→C
+  `0x24`.
+
+**Login S→C `0x14` gained a field.** With PoE1's layout the client stayed on
+"Contacting Server..." and logged nothing. Found by sending filler after the
+message, each 4-byte group carrying its own number:
+- 48 more bytes changed nothing; with 70 000 the client logged `Got Instance
+  Details`, connected to `127.0.0.1:6112` (host and port were right) and
+  sent an opening whose ticket came from the filler;
+- the next message id it then read was 679, the low half of group 679: it
+  had taken 2718 filler bytes. That run's ticket was `0x0a9cac70`, and
+  `0x0a9c` = 2716: a u16 length read where the ticket starts, 2716 bytes of
+  field (the 75 bytes left of our message and 2641 of filler), then the
+  ticket, the key, Data8 and the last byte (77 bytes): 2641 + 77 = 2718.
+
+So 0.5.5f reads: str host, u16 port, u32, u16 area hash, **u16 length +
+bytes**, u32 ticket, bytes[64], bytes[8], u8 (`InstanceInfoPoe2`,
+`LoginDialect.Poe2`'s `0x14`). What the field holds is not known. Sent
+empty, the client accepts it: `Got Instance Details`, and the opening
+echoes our ticket and address (the Gateway's opening line logs them now).
+The instance's own `0x29` (ConnectInstance, a change of area) may have
+gained the same field: not checked.
+
+**Where it stops: the first S→C `0x2f7`.** On the loading screen the client
+shows "Unable to deserialise packet with pid 4096. Last PID was 759". 759 is
+`0x2f7`, and 4096 (`0x1000`) is the low half of the player's object id,
+which follows the id in our create-object message: the client read `0x2f7`
+as a message with a 2-byte body. Id `0x2f7` is no longer the create-object
+message, so instance message ids moved in 0.5.5f (`0x1e` and `0x24` did
+not). Which ids moved, and by how much, needs 0.5.5f's message tables (the
+factories of waves 9 and 11); not done. Until then the Gateway cannot take a
+0.5.5f client past the loading screen.
+
+**Data.** `scripts/re/poe2/table_changes.py` (new) compares the tables of
+the old cache with the new bundles. 0.5.5e → 0.5.5f, for the 50 tables the
+generators read:
+- 27 are identical;
+- one row size changed: ItemVisualIdentity, 968 → 992. The 24 bytes are at
+  the end of the row: the schema's 90 columns decode the same values
+  (HASH16 still at +40);
+- rows added, and where (row numbers go on the wire): Stats +18 from row
+  27279; QuestFlags +395, appended; WorldAreas +6 (hideouts at rows 51 and
+  89–91, two appended; the HASH16s and the 103 waypoint areas are
+  unchanged); ActiveSkills +1 at 1103; GrantedEffects +1 at 8229;
+  GrantedEffectsPerLevel from 33697; GrantedEffectStatSetsPerLevel from
+  40876; ActionTypes +1 at 912; NPCs +2 from 976. The rows the code
+  hard-codes (Punch 40 / 40, the dodge roll 899 / 905, player_melee 0, the
+  stat keys) are all below the first differences.
+
+  The generators run unchanged. Regenerated: `gems.json` (19 gems' effect
+  rows and 836 level rows renumbered), `item-types.json` (26 currency stack
+  sizes 10 → 20), `quests.json` (6647 flags, 4 hideout areas). The other six
+  files come out identical.
+
+**Live-test notes.** Steam must be running and signed in before the client
+starts, or it logs "Unable to init Steam API" and quits. A wrong message
+does not always make the client complain: on a length it cannot satisfy it
+waits, silently.

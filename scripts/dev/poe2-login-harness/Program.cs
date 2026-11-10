@@ -195,7 +195,7 @@ async Task Handle(TcpClient client)
                         [new CharacterEntryPoe2("Probe", "Standard", 0, 0, 12, 0, 3, 0, 0, 0, 0, 0, 0)],
                         0, 6, 0, 0, [], [], 0, 0));
                 else if (m is PlayPoe2)
-                    await Send(new InstanceInfo("127.0.0.1", 6112, 0x7f000001, G1Town, 1, keyring.Key(1), new byte[8], 0));
+                    await Send(new InstanceInfoPoe2("127.0.0.1", 6112, 0x7f000001, G1Town, [], 1, keyring.Key(1), new byte[8], 0));
             }
             if (incoming.Desynced)
                 Log((wasDesynced ? "" : $"DESYNC: {incoming.Error}\n      ") + $"raw C->S {n} B: {Convert.ToHexString(chunk)}");

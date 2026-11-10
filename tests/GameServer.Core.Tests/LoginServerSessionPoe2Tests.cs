@@ -170,10 +170,12 @@ public class LoginServerSessionPoe2Tests
         };
         RoundTrip(session, SteamLogin);
 
-        var info = Assert.IsType<InstanceInfo>(Assert.Single(RoundTrip(session, new PlayPoe2(0, [new U32Pair(0, 0)]))));
+        var info = Assert.IsType<InstanceInfoPoe2>(Assert.Single(RoundTrip(session, new PlayPoe2(0, [new U32Pair(0, 0)]))));
 
         Assert.Equal(0x3f70, info.AreaHash);
         Assert.Equal(0x1234u, info.U32_38);   // the ticket
+        Assert.Empty(info.Blob);
+        Assert.Equal(64, info.Key64.Length);
         Assert.Equal("Wanderer", session.CharacterName);
     }
 
