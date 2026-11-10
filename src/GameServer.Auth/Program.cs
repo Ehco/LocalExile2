@@ -88,7 +88,8 @@ switch (cmd)
 }
 catch (FormatException ex)
 {
-    Console.Error.WriteLine($"[auth] {ex.Message}: the file is not the 3.29.3b client executable (PathOfExile.exe copied to Client/Game.exe).");
+    Console.Error.WriteLine($"[auth] {ex.Message}: the file is not a client executable this build knows " +
+        "(PoE1 3.29.3b: PathOfExile.exe copied to Client/Game.exe; PoE2: PathOfExileSteam.exe, see HANDOFF-POE2.md).");
     return 1;
 }
 catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)

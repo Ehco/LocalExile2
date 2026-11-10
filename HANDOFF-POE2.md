@@ -25,7 +25,7 @@ passive tree allocates and refunds nodes, saves them, and their stats reach the 
 
 | Part | State | Where |
 |---|---|---|
-| Login crypto (DH, DSA, Salsa20) | Works; ported unchanged from PoE1. The patched client accepts our handshake. | `ClientLayout.Poe2` in `LoginKeys.cs`; waves 1–3 |
+| Login crypto (DH, DSA, Salsa20) | Works; ported unchanged from PoE1. The patched client accepts our handshake. `patch` also takes the 0.5.5f exe (wave 34, not started yet) | `ClientLayout.Poe2_055e` / `Poe2_055f` in `LoginKeys.cs`; waves 1–3, 34 |
 | Login messages | Mapped and tested: `0x04`, `0x05`, `0x0e`, `0x10`, `0x11`, `0x12`, `0x13`, `0x14`, `0x15`, `0x16`, `0x18`, `0x1b` (`LoginDialect.Poe2`) | `LoginMessagesPoe2.cs`; waves 4–6, 16 |
 | Auth for the PoE2 client | `Game_CLIENT=poe2`: every Steam ticket opens one local account (a default Witch on first use). Characters of PoE2's 12 classes are created in the Standard family of leagues and chosen with Play; Play goes to Clearfell Encampment. | `LoginServerSession.cs`, `Poe2Classes.cs`, `GameServer.Auth/Program.cs`; waves 15–16 |
 | Instance opening, encryption, area message | Done | `InstanceOpeningPoe2.cs`, `InstanceProtocolPoe2.cs`, `AreaInstancePoe2.cs`; waves 7–8 |
@@ -48,7 +48,7 @@ passive tree allocates and refunds nodes, saves them, and their stats reach the 
 | Skill gems | A skill gem in the skill slots inventory (63) grants its skill (Actor skill list, `0x66`); the gem window's cut (`0x5f` / `0x60`) turns an uncut gem of the inventory into one; the gems are saved (`set_gems`); a new character starts with its class's gem (Characters StartSkillGem) and kills drop uncut gems. The cut and the skill's use work live (2026-11-05); its hits at the ground (two slams for Rolling Slam, `gems.json` combat values) are not seen live yet; supports and spirit gems refused | `Poe2Gems.cs`, `InstanceGemsPoe2.cs`, `InstanceSessionPoe2.Gems.cs`, `scripts/re/poe2/gems.py`, `cs_sigs.py`; wave 30 |
 | Passive skill tree | The tree screen shows the character's nodes (`0x3a`), allocates (`0x3c`, with the attribute chosen); the allocations are saved per character (Auth `set_passives`) and their stats fold into the sheet (`0x1d3`). Points: (level − 1) + `Game_POE2_PASSIVE_POINTS`. The gold goes out (`0x2db`, `Game_POE2_GOLD`) and refunds (`0x3e`, `0x48`) cost GoldRespecPrices' gold server-side, but the client does not let a refund click through yet; no quest rewards, weapon sets, jewels or ascendancies | `InstancePassivesPoe2.cs`, `InstanceSessionPoe2.Passives.cs`, `Poe2Passives.cs`, `Poe2CharacterStats.cs`, `scripts/re/poe2/passives.py`, `scripts/re/frida/poe2-trace-refund.js`; wave 28 |
 
-**Tests.** 743/743 pass:
+**Tests.** 748/748 pass:
 
 ```bash
 dotnet test tests/GameServer.Core.Tests -c Release
@@ -113,6 +113,9 @@ Once per machine. Everything generated here lives in `data/`, which git ignores.
 2. **Pin the client build.** Everything is mapped against PoE2 0.5.5e (`poe2_production/tags/0.5.5e`, revision
    326410). The exe SHA-256 is `d46f4c27576122afc41a428eef96b3b4c75592a16827ed8c2204508ab06a455d`. A Steam update
    moves every address in PORTING-POE2.md.
+   - **Steam moved to 0.5.5f on 2026-11-06** (SHA-256 `7e0d3665…947c834e`), and the 0.5.5e patched exe does not
+     start on the updated data. `keygen` / `patch` take the 0.5.5f exe (wave 34) and the 0.5.5e keys stay valid, but
+     nothing else is ported: the addresses, the message ids and the `.datc64` readers are still 0.5.5e's.
    - `poe2-walkmap.js` checks the bytes of the functions it hooks and refuses to run on another build.
    - `poe2-track-player.js` does not check them, and only attaches to a process named `PathOfExileSteam_le2.exe`.
 3. **Server keys and patched client.** Run from the repo root, with `<install>` the PoE2 folder (here
@@ -464,3 +467,4 @@ In rough order. Each is a wave of its own.
 | 31 | Inventory moves, saved inventory (untested live) | `f0fdf2f` |
 | 32 | Flasks (untested live) | `957a5fa` |
 | 33 | Equipment drops, white (untested live) | `32a302c` |
+| 34 | The 0.5.5f client's key layout (the patched exe not started yet) | the commit after `4047e6d` |

@@ -78,7 +78,7 @@ real client as the renderer — the approach proven by
      `GeneratePrivateKey` on this group has. The blob is not a hex or decimal
      string literal (the only long numeric literals are the four group
      strings), and nothing writes it at runtime (it is in .rdata).
-   `ClientLayout.Poe2` now maps it, so `GameServer.Auth probe`/`keygen`/`patch`
+   `ClientLayout.Poe2_055e` now maps it, so `GameServer.Auth probe`/`keygen`/`patch`
    work on the PoE2 exe. `scripts/re/poe2_login_keys.py` reproduces the blob
    checks and the xref list on any build.
 
@@ -171,7 +171,7 @@ is unchanged.
 
 **Consequence:** the login handshake is close to PoE1's; the port's next
 concrete deliverable is a *real* S→C `0x0002`. Both inputs are now mapped
-(`ClientLayout.Poe2`): `GameServer.Auth keygen` reads the client static
+(`ClientLayout.Poe2_055e`): `GameServer.Auth keygen` reads the client static
 private and the DSA domain, and `patch` swaps the verify key `y` and the
 server static public at SPKI-0x180. Wave 3 does exactly that.
 
@@ -2356,3 +2356,41 @@ Not done: the hits are not tested live yet; a ground attack's hits are not
 cancelled by a move or a dodge; the skill's own damage stats (added damage,
 "more" multipliers other than BaseMultiplier) are not read; a gem used on a
 target object still hits that one only, at the weapon's damage.
+
+## Wave 34 — the 0.5.5f client's key layout (2026-11-10)
+
+Steam replaced 0.5.5e by **0.5.5f** on 2026-11-06 (Steam build id 26476662,
+exe SHA-256 `7e0d36655e6e788202d2d588429c45064bbf87caec95938ebb19a317947c834e`,
+78 440 792 bytes). The 0.5.5e patched exe no longer starts on the updated
+data (its `ItemVisualIdentity` rows do not parse), and `GameServer.Auth patch`
+refused the new exe ("no known key layout").
+
+- **The handshake is unchanged.** The login connect function (0.5.5e
+  `0x1420e7410`, 0.5.5f `0x1420f62e0`) makes the same calls in the same
+  order. The DSA domain (p, q, g), the static group and the client's static
+  private are the same values in both builds, so a `data/login-keys.json`
+  generated from 0.5.5e stays valid: only `patch` has to be run again.
+- **Only the order of the blobs moved** (offsets from the SPKI):
+
+  | Blob | 0.5.5e | 0.5.5f |
+  |---|---|---|
+  | Server static public | −0x180 | −0x300 |
+  | Client static private (268-bit exponent) | +0x350 | −0x180 |
+
+  What follows the SPKI in 0.5.5f is unrelated data.
+- **`ClientLayout.Poe2_055f`** maps it; `ClientLayout.Poe2` is now
+  `Poe2_055e`. Detection (`ClientLayout.Fits`) had to get stricter, because
+  the static group's subgroup is half of all values (p = 2q + 1): the server
+  static public must also be full-size, and a PoE2 client static private at
+  most 268 bits. Without that the 0.5.5f layout fits the 0.5.5e image too
+  (it has another subgroup element at −0x300), and a short exponent passes
+  for a public value one time in two.
+- `patch` on 0.5.5f changes 636 bytes, as before: the server static public
+  and the DSA `y`.
+
+Not done: nothing else is checked against 0.5.5f. Every address in this file
+and in `scripts/re/poe2/`, `scripts/walkmaps/` and `scripts/re/frida/` is a
+0.5.5e address; the message ids and layouts are not compared between the two
+builds; the `.datc64` readers are not rerun on the new data; the patched
+0.5.5f exe has not been started. `scripts/re/poe2_login_keys.py` still
+checks the 0.5.5e offsets.

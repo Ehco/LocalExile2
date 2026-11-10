@@ -127,10 +127,92 @@ public class LoginCryptoTests
 
         var client = ClientImage.Load(image);
 
-        Assert.Same(ClientLayout.Poe2, client.Layout);
+        Assert.Same(ClientLayout.Poe2_055e, client.Layout);
         Assert.Equal(16 + 384, client.Offset);
         Assert.Equal(clientStaticPriv, client.ReadClientStaticPrivate());
         Assert.Equal(new BigInteger(serverStaticPub, isUnsigned: true, isBigEndian: true), client.ReadServerStaticPublic());
+    }
+
+    [Fact]
+    public void Detects_poe2_055f_layout_with_both_static_keys_before_the_verify_key()
+    {
+        // 0.5.5f order: server static public, client static private (short exponent), SPKI, unrelated data.
+        BigInteger clientStaticPriv = BigInteger.Pow(2, 267) + 12345;
+        byte[] serverStaticPub = RandomStaticPublic();
+
+        var client = ClientImage.Load(Poe2_055fImage(serverStaticPub, clientStaticPriv));
+
+        Assert.Same(ClientLayout.Poe2_055f, client.Layout);
+        Assert.Equal(16 + 384 + 384, client.Offset);
+        Assert.Equal(clientStaticPriv, client.ReadClientStaticPrivate());
+        Assert.Equal(new BigInteger(serverStaticPub, isUnsigned: true, isBigEndian: true), client.ReadServerStaticPublic());
+    }
+
+    [Fact]
+    public void Does_not_take_a_short_exponent_that_is_a_subgroup_element_for_the_server_static_public()
+    {
+        // Half of all values are subgroup elements (p = 2q + 1), short exponents included: a square always is.
+        // In a 0.5.5f image such an exponent sits where 0.5.5e keeps the server static public.
+        BigInteger clientStaticPriv = BigInteger.Pow(2, 266);
+        Assert.True(LoginGroups.Static.IsValidElement(clientStaticPriv));
+
+        var client = ClientImage.Load(Poe2_055fImage(RandomStaticPublic(), clientStaticPriv));
+
+        Assert.Same(ClientLayout.Poe2_055f, client.Layout);
+        Assert.Equal(clientStaticPriv, client.ReadClientStaticPrivate());
+    }
+
+    [Fact]
+    public void Does_not_take_a_full_size_value_for_the_short_client_static_private()
+    {
+        // The real 0.5.5e image has a second subgroup element 0x180 before its server static public: without a
+        // size check on the exponent, the 0.5.5f layout fits it too.
+        BigInteger clientStaticPriv = BigInteger.Pow(2, 267) + 12345;
+        byte[] serverStaticPub = RandomStaticPublic();
+        byte[] spki = SyntheticVerifyKey();
+        byte[] image = [.. new byte[16], .. RandomStaticPublic(), .. serverStaticPub, .. spki,
+            .. new byte[0x350 - spki.Length], .. Fixed(clientStaticPriv, 384), .. new byte[0x100]];
+
+        foreach (var layout in ClientLayout.Known.Reverse())
+            Assert.Equal(ReferenceEquals(layout, ClientLayout.Poe2_055e), layout.Fits(image, 16 + 384 + 384));
+        Assert.Same(ClientLayout.Poe2_055e, ClientImage.Load(image).Layout);
+    }
+
+    [Fact]
+    public void Patch_of_a_055f_image_changes_the_verify_key_and_the_server_static_public_only()
+    {
+        BigInteger clientStaticPriv = BigInteger.Pow(2, 267) + 12345;
+        byte[] original = Poe2_055fImage(RandomStaticPublic(), clientStaticPriv);
+        var image = ClientImage.Load([.. original]);
+        var signing = image.ReadVerifyKey() with { X = 7, Y = BigInteger.Pow(2, 2046) + 5 };
+        var keys = new LoginServerKeys(signing, LoginGroups.Static.RandomExponent(),
+            LoginGroups.Static.PublicFor(clientStaticPriv));
+
+        image.Patch(keys);
+
+        var patched = ClientImage.Load(image.Bytes);
+        Assert.Same(ClientLayout.Poe2_055f, patched.Layout);
+        Assert.Equal(keys.ServerStaticPublic, patched.ReadServerStaticPublic());
+        Assert.Equal(signing.Y, patched.ReadVerifyKey().Y);
+        Assert.Equal(clientStaticPriv, patched.ReadClientStaticPrivate());
+        int spki = patched.Offset;
+        var changed = Enumerable.Range(0, original.Length).Where(i => original[i] != image.Bytes[i]).ToList();
+        Assert.NotEmpty(changed);
+        Assert.All(changed, i => Assert.True(
+            (i >= spki - 0x300 && i < spki - 0x180) || (i >= spki && i < spki + ClientImage.DefaultVerifyKeyLength),
+            $"byte 0x{i:x} changed outside the two key blobs"));
+    }
+
+    [Fact]
+    public void Unknown_layout_names_the_layouts_that_were_tried()
+    {
+        byte[] spki = SyntheticVerifyKey();
+        byte[] image = [.. new byte[0x400], .. spki, .. new byte[0x800]];
+
+        var ex = Assert.Throws<FormatException>(() => ClientImage.Load(image));
+
+        Assert.Contains(ClientLayout.Poe2_055f.Name, ex.Message);
+        Assert.Contains(ClientLayout.Poe1_3293b.Name, ex.Message);
     }
 
     [Fact]
@@ -157,6 +239,20 @@ public class LoginCryptoTests
         Assert.Equal(ClientImage.DefaultVerifyKeyLength, der.Length);
         return der;
     }
+
+    /// <summary>A synthetic 0.5.5f image: both static keys before the SPKI, and after it the unrelated full-size
+    /// data the real build has where 0.5.5e kept the client static private.</summary>
+    private static byte[] Poe2_055fImage(byte[] serverStaticPub, BigInteger clientStaticPriv)
+    {
+        byte[] spki = SyntheticVerifyKey();
+        byte[] unrelated = new byte[384];
+        Array.Fill(unrelated, (byte)0xa5);
+        return [.. new byte[16], .. serverStaticPub, .. Fixed(clientStaticPriv, 384), .. spki,
+            .. new byte[0x350 - spki.Length], .. unrelated, .. new byte[0x100]];
+    }
+
+    private static byte[] RandomStaticPublic() =>
+        Fixed(LoginGroups.Static.PublicFor(LoginGroups.Static.RandomExponent()), 384);
 
     private static byte[] Fixed(BigInteger v, int length)
     {
