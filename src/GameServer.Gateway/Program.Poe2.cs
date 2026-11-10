@@ -24,6 +24,11 @@ partial class Program
     // Game_POE2_TRACE=1 logs every decrypted client chunk (its first 48 bytes), to map new C→S messages.
     static readonly bool Poe2Trace = Environment.GetEnvironmentVariable("Game_POE2_TRACE") == "1";
 
+    // The client build's message ids, as shifts from the code's (Poe2WireIds): 0.5.5f's unless Game_POE2_ID_SHIFTS
+    // gives others ("2f1:3": hex first id, shift; "0:0" for none, a 0.5.5e client), to find the ids of a new build.
+    static readonly Poe2WireIds Poe2Ids = Environment.GetEnvironmentVariable("Game_POE2_ID_SHIFTS") is { Length: > 0 } shifts
+        ? Poe2WireIds.Parse(shifts) : Poe2WireIds.Client055f;
+
     static bool IsPoe2Client =>
         string.Equals(Environment.GetEnvironmentVariable("Game_CLIENT"), "poe2", StringComparison.OrdinalIgnoreCase);
 
@@ -96,6 +101,9 @@ partial class Program
                 var gate = new SemaphoreSlim(1, 1);
                 async Task Send(byte[] message, string? log)
                 {
+                    // The id as the client's build numbers it; the entry's inventories are one buffer of messages.
+                    bool inventories = message.Length > 2 && (message[0] << 8 | message[1]) == InstanceInventoriesPoe2.AddInventoryId;
+                    message = Poe2Ids.ToWire(message, inventories ? InstanceInventoriesPoe2.AddInventoryLength : 0);
                     await gate.WaitAsync(closed.Token);
                     try
                     {
@@ -164,7 +172,7 @@ partial class Program
                 ciphers.Receive.Process(unread);
                 while (true)
                 {
-                    var messages = InstanceSessionPoe2.Split(unread, out int rest);
+                    var messages = InstanceSessionPoe2.Split(unread, out int rest, Poe2Ids);
                     foreach (var message in messages)
                     {
                         bool wasInWorld = session.InWorld;
@@ -181,7 +189,8 @@ partial class Program
                         await TransferPoe2(remote, opening.Ticket, area, session.LeavingTo!.Value, session.LeavingAtWaypoint, keyring, Send);
                     }
                     unread = unread[rest..];
-                    if (unread.Length >= 2 && !InstanceSessionPoe2.CanFrame((ushort)(unread[0] << 8 | unread[1])))
+                    if (unread.Length >= 2 && !(Poe2Ids.TryFromWire((ushort)(unread[0] << 8 | unread[1]), out ushort framed)
+                        && InstanceSessionPoe2.CanFrame(framed)))
                     {
                         // No length for this id: drop the rest of the read (the client writes one message per chunk).
                         Console.WriteLine($"[gateway] {remote} C→S 0x{unread[0] << 8 | unread[1]:x4} not framed, {unread.Length} B dropped");

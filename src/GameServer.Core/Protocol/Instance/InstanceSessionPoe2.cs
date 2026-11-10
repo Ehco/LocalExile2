@@ -392,14 +392,22 @@ public sealed partial class InstanceSessionPoe2
     /// Splits decrypted client bytes into messages: the fixed-length ids above and 0x63. Stops at the first other id
     /// or at a message cut off at the end; <paramref name="rest"/> is where it stopped (the length when all was split).
     /// </summary>
-    public static IReadOnlyList<byte[]> Split(ReadOnlySpan<byte> data, out int rest)
+    public static IReadOnlyList<byte[]> Split(ReadOnlySpan<byte> wire, out int rest, Poe2WireIds? ids = null)
     {
         var messages = new List<byte[]>();
+        // With the client's own numbering (ids), each message's id is put back to the code's before it is measured
+        // and returned; an id the code has no number for stops the split like any id without a length.
+        Span<byte> data = wire.ToArray();
         int at = 0;
         while (data.Length - at >= 2)
         {
             var tail = data[at..];
             ushort id = BinaryPrimitives.ReadUInt16BigEndian(tail);
+            if (ids is not null)
+            {
+                if (!ids.TryFromWire(id, out id)) break;
+                BinaryPrimitives.WriteUInt16BigEndian(tail, id);
+            }
             int length;
             if (FixedLengths.TryGetValue(id, out int fixedLength)) length = fixedLength <= tail.Length ? fixedLength : 0;
             else if (id == InstanceMovementPoe2.DirectionMoveId) InstanceMovementPoe2.ReadDirectionMove(tail, out length);

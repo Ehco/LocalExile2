@@ -90,6 +90,9 @@ public static class InstanceInventoriesPoe2
         return w.U8(0).ToArray();
     }
 
+    /// <summary>The length of one <see cref="AddInventory"/> message (the entry sends them as one buffer).</summary>
+    public const int AddInventoryLength = 14;
+
     public static byte[] AddInventory(uint inventoryId, Slot slot, byte manager = 0)
     {
         var w = new LoginWriter().U16(AddInventoryId).U8(0).U8(manager).U32(inventoryId)

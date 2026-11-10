@@ -2465,3 +2465,72 @@ generators read:
 starts, or it logs "Unable to init Steam API" and quits. A wrong message
 does not always make the client complain: on a length it cannot satisfy it
 waits, silently.
+
+## Wave 36 — 0.5.5f in game: the instance ids and `0x29` (2026-11-10)
+
+The 0.5.5f client is in game again: the camp and its NPCs, the walk, a
+dialogue, skills, the change of area to Clearfell and a fight there, 75 s
+without an error on the last run. Like wave 35, all of it comes from what
+the client does and says; no address of the 0.5.5f exe was looked up.
+
+**Message ids: everything from `0x2f1` up is 3 higher**
+(`Poe2WireIds.Client055f`).
+- The player's create-object message followed by filler, under one
+  candidate id per run: under `0x2fa` the client read all of it and then
+  complained about the filler's first two bytes ("pid 32897. Last PID was
+  762"). So `0x2f7` → `0x2fa`.
+- With only the ids from `0x2f7` up moved, the client took our frame end
+  `0x2f4` for a change of area ("Instance sent change area notification that
+  does not exist"): `0x2f1` → `0x2f4`, so the frames moved too (`0x2f4` /
+  `0x2f5` → `0x2f7` / `0x2f8`).
+- What the client sends confirms both ends: on entering, `0x62`, `0x9a`,
+  `0xbc`, `0x13d`, `0x14c`, `0x17a` and `0x2e8` under their 0.5.5e ids, and
+  0.5.5e's `0x357` as `0x35a`; on leaving, `0x355` as `0x358`.
+- So three ids were inserted between `0x2e8` and `0x2f1`. Where exactly is
+  not known: the code uses no id of `0x2e9`–`0x2f0`.
+- Wave 35's reading of the first error was wrong in one point: `0x2f7` is
+  not a message with a 2-byte body, it is the frame end (no body), and the
+  client's reader passed over the two zero bytes that followed before it
+  named `0x1000`.
+
+The code keeps 0.5.5e's ids, the ones in this file. `Poe2WireIds` holds the
+client build's shifts and is applied where bytes leave and arrive (the
+Gateway's `Send`, `InstanceSessionPoe2.Split`). `Game_POE2_ID_SHIFTS`
+overrides the table (`2f1:3`: hex first id, shift; `0:0` for none).
+
+**S→C `0x29` (connect to instance) changed like the login's `0x14`.** With
+0.5.5e's layout the client answered "Server sent area hash for area that
+doesn't exist". Three runs, each with other bytes after the IPv4 address:
+- the area hash repeated: no error, but the client waited (a length read
+  from the pattern);
+- area, `0000`, ticket, key: a new connection with our ticket, then garbage
+  after its `0x11` (the key was read 2 bytes further);
+- area, `0000`, ticket, `0000`, key: Clearfell.
+
+So 0.5.5f reads: u8 route, str host, u16 port, u32 IPv4, u16 area hash,
+**u16 length + bytes**, u32 ticket, u8, u8, bytes[64], bytes[8], u8. The
+u32 that preceded the area in 0.5.5e is gone.
+
+**The method, for the next update.**
+- The client names what it could not read in a message box (window class
+  `#32770`, title "Exception"): "Unable to deserialise packet with pid X.
+  Last PID was Y". Send the message under test, then bytes that name their
+  own offset (byte i = 0x80 + i): X says where the client stopped.
+- A client that waits instead (no box, it quits about 26 s later) has read a
+  length it cannot satisfy.
+- The ids the client itself sends on entering are a free check of the table.
+- The client logs in and presses Play by itself only when it has the
+  foreground; a click posted to its window does it otherwise.
+
+**Live-test notes.**
+- "Character invalid" on entering is the passive tree: the client logs "18
+  character passive skills allocated but only allowed 0". A character with
+  allocated passives needs `Game_POE2_PASSIVE_POINTS` again.
+- C→S seen and not framed: `0x2e8` and `0x14c` on entering (as in 0.5.5e),
+  `0x2a` (14 bytes, several in a row), and an 868-byte chunk that starts
+  with wire id `0x362` when leaving the camp.
+
+Not checked on 0.5.5f: the waypoint travel, death and resurrect, the gem
+window, flasks, inventory moves, the passive tree's own messages, pickups
+(an object was removed, `0x2fa`, without an error). They use ids below
+`0x2e9` or moved with the rest; none raised an error in these runs.

@@ -56,11 +56,13 @@ public class AreaTransitionPoe2Tests
 
         byte[] message = InstanceProtocolPoe2.ConnectInstance("127.0.0.1", 6112, 0x1d1bd7dc, Clearfell, key);
 
+        // 0.5.5f (wave 36): the area follows the address, then an empty length-prefixed field, the ticket, two bytes.
+        Assert.Equal(103, message.Length);
         Assert.Equal("0029" + "00", Convert.ToHexString(message, 0, 3));
         Assert.Equal(key, message[^73..^9]);
         Assert.Equal(new byte[9], message[^9..]);
-        Assert.Equal("9875" + "1D1BD7DC" + "0000", Convert.ToHexString(message[^81..^73]));
-        Assert.Equal("17E0" + "7F000001" + "00000000", Convert.ToHexString(message[^91..^81]));
+        Assert.Equal("9875" + "0000" + "1D1BD7DC" + "0000", Convert.ToHexString(message[^83..^73]));
+        Assert.Equal("17E0" + "7F000001", Convert.ToHexString(message[^89..^83]));
     }
 
     static readonly byte[] AreaGenerated = Convert.FromHexString("009A003533F5D53A64F181");

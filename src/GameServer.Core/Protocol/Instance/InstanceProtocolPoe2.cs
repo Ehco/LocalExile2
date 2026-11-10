@@ -92,14 +92,17 @@ public static class InstanceProtocolPoe2
     /// <summary>
     /// S→C 0x29 (reader 0x142152020, class size 0x98; handled by the in-game state's slot 0xf8, 0x14100b2a0, "Got
     /// Instance Details"): PoE1's connect to instance 0x27 (<see cref="InstanceTransfer.ConnectInstance"/>) with the
-    /// route byte first and one more u8 last. u8 route, str host, u16 port, u32 IPv4 (big-endian), u32, u16 area HASH16
-    /// (+0x8c), u32 ticket (+0x40), u8, u8, 64-byte instance key, 8 bytes, u8. The client then opens a new instance
-    /// connection with the ticket and keeps the old one until the new one is up.
+    /// route byte first and one more u8 last. In 0.5.5e: u8 route, str host, u16 port, u32 IPv4 (big-endian), u32, u16
+    /// area HASH16 (+0x8c), u32 ticket (+0x40), u8, u8, 64-byte instance key, 8 bytes, u8. The client then opens a new
+    /// instance connection with the ticket and keeps the old one until the new one is up.
+    /// <para>0.5.5f, found live (PORTING-POE2.md, wave 36): the u32 before the area is gone and the area is followed by
+    /// the length-prefixed field the login's 0x14 gained (<see cref="Login.InstanceInfoPoe2"/>), sent empty: u8 route, str
+    /// host, u16 port, u32 IPv4, u16 area HASH16, u16 length + bytes, u32 ticket, u8, u8, key, 8 bytes, u8.</para>
     /// </summary>
     public static byte[] ConnectInstance(string host, ushort port, uint ticket, ushort areaHash16, byte[] key64)
     {
         uint ip = BinaryPrimitives.ReadUInt32BigEndian(System.Net.IPAddress.Parse(host).GetAddressBytes());
-        return new LoginWriter().U16(ConnectInstanceId).U8(0).Str(host).U16(port).U32(ip).U32(0).U16(areaHash16).U32(ticket)
+        return new LoginWriter().U16(ConnectInstanceId).U8(0).Str(host).U16(port).U32(ip).U16(areaHash16).Blob([]).U32(ticket)
             .U8(0).U8(0).Fixed(key64, 64).Fixed(new byte[8], 8).U8(0).ToArray();
     }
 
