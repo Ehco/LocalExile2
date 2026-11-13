@@ -14,7 +14,10 @@ public class InstanceItemsPoe2Tests
         1351093167, 1, 1, 1, 2083, ["Base", "Usable", "Stack"], 40);
     static readonly Poe2Items.ItemType Transmute = new("Metadata/Items/Currency/CurrencyUpgradeToMagic", 3, "Orb of Transmutation",
         0x11223344, 1, 1, 1, 2084, ["Base", "Usable", "Stack"], 40);
-    static readonly IReadOnlyDictionary<string, Poe2Items.ItemType> Types = new Dictionary<string, Poe2Items.ItemType> { [Wisdom.Id] = Wisdom, [Transmute.Id] = Transmute };
+    /// <summary>Wider than the cursor's 4x4: an item the cursor cannot carry.</summary>
+    static readonly Poe2Items.ItemType Oversize = new("Metadata/Items/Test/Oversize", 9, "Oversize", 0x55667788, 5, 1, 1, 999, ["Base"], 1);
+    static readonly IReadOnlyDictionary<string, Poe2Items.ItemType> Types = new Dictionary<string, Poe2Items.ItemType>
+    { [Wisdom.Id] = Wisdom, [Transmute.Id] = Transmute, [Oversize.Id] = Oversize };
 
     static InstanceSessionPoe2 InWorld(IEnumerable<SavedItem>? items = null, List<IReadOnlyList<SavedItem>>? saved = null)
     {
@@ -154,5 +157,41 @@ public class InstanceItemsPoe2Tests
         Assert.Null(inventory.Restore(Poe2Items.Create(Wisdom), 1, 1, 0, 0));
         Assert.NotNull(inventory.Remove(inventory.Items[0].Id));
         Assert.Null(inventory.Remove(999));
+    }
+
+    // Regression (wave 37 follow-up): PickUpItem removed the item from its inventory before checking that the
+    // cursor could hold it, so an item the cursor cannot carry was destroyed by the removal alone.
+    [Fact]
+    public void A_pick_up_the_cursor_cannot_hold_leaves_the_item_in_its_inventory()
+    {
+        var session = InWorld([Saved(Main, 0, 0, Oversize)]);
+
+        Assert.Empty(session.Handle(PickUp(Main, session.MainInventory[0].Id), 0));
+
+        Assert.Single(session.MainInventory);
+        Assert.Null(session.Held);
+    }
+
+    // Regression (wave 37 follow-up): PlaceItem restored the swapped-out item with `else if`, so a shift-place
+    // onto a different item's cell dropped the rest of the held stack (5 scrolls -> 1 in the grid, 4 vanished).
+    [Fact]
+    public void A_shift_place_that_swaps_keeps_the_rest_of_the_stack()
+    {
+        var session = InWorld([Saved(Main, 0, 0, Wisdom, 5), Saved(Main, 2, 2, Transmute)]);
+        session.Handle(PickUp(Main, session.MainInventory.First(e => e.Item.TypeHash == Wisdom.Hash).Id), 1);
+        Assert.Equal(5, session.Held!.Item.StackSize);
+
+        var swap = session.Handle(Place(Main, 2, 2, one: true), 2).ToList();
+
+        // four inventory changes: the item placed, the held stack leaving the cursor, the item the swap pushes out,
+        // and the rest of the stack coming back. The fourth was dropped before this fix.
+        Assert.Equal(4, Ids(swap).Count(id => id == "00DE"));
+        Assert.Equal(Transmute.Hash, session.Held!.Item.TypeHash);   // the swapped item is now held
+
+        session.Handle(Place(Main, 5, 0), 3);   // the swapped item goes back into the grid
+        session.Handle(Place(Main, 7, 0), 4);   // and so does the rest of the stack
+
+        Assert.Equal(5, session.MainInventory.Where(e => e.Item.TypeHash == Wisdom.Hash)
+            .Sum(e => (int)e.Item.StackSize));
     }
 }

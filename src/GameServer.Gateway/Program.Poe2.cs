@@ -176,8 +176,17 @@ partial class Program
                     foreach (var message in messages)
                     {
                         bool wasInWorld = session.InWorld;
-                        foreach (var answer in session.Handle(message, clock.Elapsed.TotalSeconds))
-                            await Send(answer, DescribePoe2(answer));
+                        // One bad message must cost that message only: a session bug used to take the whole
+                        // connection down (and with it the client) mid-session. A dead socket still ends the read loop.
+                        try
+                        {
+                            foreach (var answer in session.Handle(message, clock.Elapsed.TotalSeconds))
+                                await Send(answer, DescribePoe2(answer));
+                        }
+                        catch (Exception e) when (e is not (IOException or ObjectDisposedException or OperationCanceledException or SocketException))
+                        {
+                            Console.WriteLine($"[gateway] {remote} C→S {Convert.ToHexString(message.AsSpan(0, Math.Min(2, message.Length)))}: {e.GetType().Name}: {e.Message}");
+                        }
                         if (!wasInWorld && session.InWorld)
                             _ = RunPoe2Frames(Send, () => session.Tick(clock.Elapsed.TotalSeconds), closed.Token);
                     }
@@ -465,8 +474,17 @@ partial class Program
         {
             while (await timer.WaitForNextTickAsync(stop))
             {
-                foreach (var message in tick()) await send(message, DescribePoe2(message));
-                await send(InstanceProtocolPoe2.FrameEnd(), null);
+                // A session bug in one frame must not stop the frames: the client would freeze with no close and
+                // nothing in the log. Log it and keep ticking; a dead socket still ends the loop below.
+                try
+                {
+                    foreach (var message in tick()) await send(message, DescribePoe2(message));
+                    await send(InstanceProtocolPoe2.FrameEnd(), null);
+                }
+                catch (Exception e) when (e is not (IOException or ObjectDisposedException or OperationCanceledException or SocketException))
+                {
+                    Console.WriteLine($"[gateway] frame tick: {e.GetType().Name}: {e.Message}");
+                }
             }
         }
         catch (Exception e) when (e is IOException or ObjectDisposedException or OperationCanceledException or SocketException) { }
