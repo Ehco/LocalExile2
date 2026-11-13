@@ -1,0 +1,118 @@
+"""Writes data/poe2/gems.json: PoE2's skill gems and uncut gems (PORTING-POE2.md, wave 30).
+
+    python scripts/re/poe2/gems.py
+
+"skills": one entry per SkillGems row whose base item is under Metadata/Items/Gems/ or Metadata/Items/Gem/ and has a
+granted effect: the base item (id, BaseItemTypes row, name, HASH32), the gem's colour (GemColour: 1 red, 2 green,
+3 blue, 4 white), its kind ("skill", "support" or "spirit" from the effect's IsSupport and the GemType), MinLevelReq, the
+attribute requirement percents, the SkillGems and GemEffects rows (what the gem window may send), the GemEffects tags, the granted effect (GrantedEffects row and Id, its ActiveSkills Id
+and name, the effect HASH32) and, per gem level, the GrantedEffectsPerLevel row and the GrantedEffectStatSetsPerLevel
+rows the Actor's skill record refers to (the effect's StatSet first, then its AdditionalStatSets). Only the first of a
+gem's GemEffects is taken (the regular gem; the others are variants).
+"uncut": the uncut gems (UncutGems tiers and the other Metadata/Items/Gems/*Uncut* bases): id, row, name, HASH32, tier
+(the gem level the cut gem gets) and kind.
+"starting": each Characters row's StartSkillGem (the gem a new character of that class starts with: Rolling Slam for
+the Warrior, Spark for the Sorceress ...): the character Id (the class's object type) and the gem's BaseItemTypes row.
+
+The server grants a socketed gem's skill from this (Poe2Gems); the items themselves need data/poe2/item-types.json to
+hold the gems too (item_types.py). Files come from the Steam bundles through steamdump, cached in Tools/re/out/poe2.
+"""
+import json
+import os
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
+sys.path.insert(0, HERE)
+import dat  # noqa: E402
+
+OUT = os.path.join(REPO, "data", "poe2", "gems.json")
+PREFIXES = ("Metadata/Items/Gems/", "Metadata/Items/Gem/")
+
+
+def combat(stat_sets, stat_ids, multipliers, set_rows, level_rows):
+    """A gem level's combat values: the main stat set's added attack time (total_attack_time_+_ms) and action distance
+    (attack_maximum_action_distance_+), and its hits as [BaseMultiplier (1/10000, more or less damage), area radius
+    (game units, 0 without one)]: the main set's, or the additional sets' when the main one deals no damage (Rolling
+    Slam's first and second slam)."""
+    def constants(s):
+        st = stat_sets[s]
+        return {stat_ids[k]: v for k, v in zip(st["ConstantStats"] or [], st["ConstantStatsValues"] or [])}
+
+    def implicit(s):
+        return {stat_ids[k] for k in stat_sets[s]["ImplicitStats"] or []}
+
+    main = constants(set_rows[0])
+    damaging = [(s, r) for s, r in zip(set_rows, level_rows) if r is not None]
+    if "base_deal_no_damage" in implicit(set_rows[0]) and len(damaging) > 1:
+        damaging = damaging[1:]
+    else:
+        damaging = damaging[:1]
+    hits = []
+    for s, r in damaging:
+        c = constants(s)
+        radius = c.get("active_skill_base_area_of_effect_radius") or c.get("active_skill_base_secondary_area_of_effect_radius") or 0
+        hits.append([multipliers.get(r, 0), radius])
+    return {"attackMs": main.get("total_attack_time_+_ms", 0), "reach": main.get("attack_maximum_action_distance_+", 0), "hits": hits}
+
+
+def main():
+    bases, gems, effects = dat.table("BaseItemTypes"), dat.table("SkillGems"), dat.table("GrantedEffects")
+    gem_effects, active = dat.table("GemEffects"), dat.table("ActiveSkills")
+    per_level = {}
+    for r in dat.table("GrantedEffectsPerLevel"):
+        per_level.setdefault(r["GrantedEffect"], {})[r["Level"]] = r["_row"]
+    stat_rows, multipliers = {}, {}
+    for r in dat.table("GrantedEffectStatSetsPerLevel"):
+        stat_rows[(r["StatSet"], r["GemLevel"])] = r["_row"]
+        multipliers[r["_row"]] = r["BaseMultiplier"]
+    stat_ids = [s["Id"] for s in dat.table("Stats")]
+    stat_sets = dat.table("GrantedEffectStatSets")
+    skills = []
+    for g in gems:
+        base = bases[g["BaseItemType"]]
+        if not base["Id"].startswith(PREFIXES) or not g["GemEffects"]:
+            continue
+        fx = gem_effects[g["GemEffects"][0]]
+        if fx["GrantedEffect"] is None:
+            continue
+        e = effects[fx["GrantedEffect"]]
+        kind = "support" if e["IsSupport"] else ("spirit" if g["GemType"] == 2 else "skill")
+        skill = active[e["ActiveSkill"]] if e["ActiveSkill"] is not None else None
+        levels = []
+        for level, gepl in sorted(per_level.get(e["_row"], {}).items()):
+            sets = [stat_rows.get((s, level)) for s in [e["StatSet"], *(e["AdditionalStatSets"] or [])]]
+            if sets[0] is None:
+                continue
+            rows = [s for s in sets if s is not None]
+            levels.append([level, gepl, rows, combat(stat_sets, stat_ids, multipliers,
+                                                     [e["StatSet"], *(e["AdditionalStatSets"] or [])], sets)])
+        if not levels:
+            continue
+        skills.append({"id": base["Id"], "row": base["_row"], "name": base["Name"], "hash": base["HASH32"],
+                       "skillGemsRow": g["_row"], "gemEffectsRow": g["GemEffects"][0],
+                       "colour": g["GemColour"], "kind": kind, "gemType": g["GemType"], "minLevel": g["MinLevelReq"],
+                       "strength": g["StrengthRequirementPercent"], "dexterity": g["DexterityRequirementPercent"],
+                       "intelligence": g["IntelligenceRequirementPercent"], "tags": fx["GemTags"] or [],
+                       "effect": {"row": e["_row"], "id": e["Id"], "hash": e["HASH32"],
+                                  "activeSkill": skill and skill["Id"], "skillName": skill and skill["DisplayedName"]},
+                       "levels": levels})
+    tiers = {r["BaseItemType"]: r["Tier"] for r in dat.table("UncutGems")}
+    uncut = []
+    for b in bases:
+        if not b["Id"].startswith(PREFIXES) or "Uncut" not in b["Id"]:
+            continue
+        kind = "support" if "Support" in b["Id"] else ("spirit" if "Reservation" in b["Id"] else "skill")
+        uncut.append({"id": b["Id"], "row": b["_row"], "name": b["Name"], "hash": b["HASH32"], "tier": tiers.get(b["_row"], 0), "kind": kind})
+    starting = [{"character": c["Id"], "gem": c["StartSkillGem"], "gemId": bases[c["StartSkillGem"]]["Id"]}
+                for c in dat.table("Characters") if c["StartSkillGem"] is not None]
+    os.makedirs(os.path.dirname(OUT), exist_ok=True)
+    with open(OUT, "w", encoding="utf-8") as f:
+        f.write('{"skills":[\n' + ",\n".join(" " + json.dumps(s, separators=(",", ":"), ensure_ascii=False) for s in skills)
+                + '\n],"uncut":[\n' + ",\n".join(" " + json.dumps(u, separators=(",", ":"), ensure_ascii=False) for u in uncut)
+                + '\n],"starting":[\n' + ",\n".join(" " + json.dumps(s, separators=(",", ":")) for s in starting) + "\n]}\n")
+    print(f"{len(skills)} gems, {len(uncut)} uncut, {len(starting)} starting -> {OUT}", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

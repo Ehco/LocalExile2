@@ -57,15 +57,55 @@ public sealed record ClientLayout(
     int VerifyKeyLength,
     int? ClientStaticPrivateOffset,
     int? ServerStaticPublicOffset,
-    int StaticLength)
+    int StaticLength,
+    int? ClientStaticPrivateMaxBits = null)
 {
+    /// <summary>Crypto++ caps a private exponent of the 3072-bit static group at
+    /// 2 * DiscreteLogWorkFactor(3072) bits, so its 384-byte big-endian blob starts with 350 zero bytes.</summary>
+    public const int ShortExponentBits = 268;
+
+    /// <summary>A public value is a random element of the group: it has this many leading zero bits with
+    /// probability 2^-64. Tells it apart from a short exponent, which is a subgroup element half the time.</summary>
+    private const int FullSizeSlackBits = 64;
+
     /// <summary>PoE1 3.29.3b: client static private after the SPKI, server static public after that.</summary>
     public static readonly ClientLayout Poe1_3293b = new("PoE1 3.29.3b", 0x346, 0x350, 0x4d0, 384);
 
-    /// <summary>PoE2 Steam client: server static public sits immediately *before* the SPKI (verified a
-    /// subgroup element); the client static private exponent has not been located yet
-    /// (see PORTING-POE2.md) — the static DH half may have moved or changed.</summary>
-    public static readonly ClientLayout Poe2 = new("PoE2", 0x346, null, -0x180, 384);
+    /// <summary>PoE2 0.5.5e (Steam): server static public immediately *before* the SPKI, the client static
+    /// private (a short exponent) at +0x350.</summary>
+    public static readonly ClientLayout Poe2_055e = new("PoE2 0.5.5e", 0x346, 0x350, -0x180, 384, ShortExponentBits);
+
+    /// <summary>PoE2 0.5.5f (Steam): both static keys before the SPKI, server static public then client static
+    /// private (PORTING-POE2.md, wave 34). What follows the SPKI is unrelated data.</summary>
+    public static readonly ClientLayout Poe2_055f = new("PoE2 0.5.5f", 0x346, -0x180, -0x300, 384, ShortExponentBits);
+
+    /// <summary>Every layout <see cref="ClientImage.Detect"/> tries, in order. A PoE2 layout never fits another PoE2
+    /// build's image (the exponent's size settles it); PoE1 against PoE2 rests on the subgroup check alone.</summary>
+    public static IReadOnlyList<ClientLayout> Known { get; } = [Poe1_3293b, Poe2_055e, Poe2_055f];
+
+    /// <summary>True when the blobs this layout places around the SPKI at <paramref name="spkiOffset"/> are what it
+    /// says: a full-size subgroup element for the server static public, and a non-zero exponent of the expected
+    /// size for the client static private.</summary>
+    public bool Fits(ReadOnlySpan<byte> image, int spkiOffset)
+    {
+        if (ServerStaticPublicOffset is not int sso || !TryBlob(image, spkiOffset + sso, out var publicBlob)) return false;
+        BigInteger serverPublic = Big.FromBigEndian(publicBlob);
+        if (serverPublic.GetBitLength() <= StaticLength * 8 - FullSizeSlackBits) return false;
+        if (!LoginGroups.Static.IsValidElement(serverPublic)) return false;
+
+        if (ClientStaticPrivateOffset is not int cso) return true;
+        if (!TryBlob(image, spkiOffset + cso, out var privateBlob)) return false;
+        BigInteger clientPrivate = Big.FromBigEndian(privateBlob);
+        return !clientPrivate.IsZero &&
+            (ClientStaticPrivateMaxBits is not int maxBits || clientPrivate.GetBitLength() <= maxBits);
+    }
+
+    private bool TryBlob(ReadOnlySpan<byte> image, int at, out ReadOnlySpan<byte> blob)
+    {
+        bool inside = at >= 0 && at + StaticLength <= image.Length;
+        blob = inside ? image.Slice(at, StaticLength) : default;
+        return inside;
+    }
 }
 
 /// <summary>
@@ -140,25 +180,10 @@ public sealed class ClientImage
     {
         int at = bytes.AsSpan().IndexOf(DerPrefix);
         if (at < 0) throw new FormatException("login verify key not found in client image");
-        foreach (var layout in new[] { ClientLayout.Poe1_3293b, ClientLayout.Poe2 })
-        {
-            if (layout.ServerStaticPublicOffset is int sso && SubgroupElement(bytes, at + sso, layout.StaticLength) &&
-                (layout.ClientStaticPrivateOffset is not int cso || HasNonZero(bytes, at + cso, layout.StaticLength)))
-                return layout;
-        }
-        throw new FormatException("no known key layout matches the bytes around the SPKI");
-    }
-
-    private static bool HasNonZero(byte[] bytes, int at, int length) =>
-        at >= 0 && at + length <= bytes.Length && bytes.AsSpan(at, length).IndexOfAnyExcept((byte)0) >= 0;
-
-    /// <summary>True when the 384 bytes at the given file offset are an element of the static DH subgroup
-    /// (y^q = 1) — how the server static public is told apart from a private exponent.</summary>
-    private static bool SubgroupElement(byte[] bytes, int at, int staticLength)
-    {
-        if (at < 0 || at + staticLength > bytes.Length) return false;
-        var value = Big.FromBigEndian(bytes.AsSpan(at, staticLength));
-        return value > 1 && LoginGroups.Static.IsValidElement(value);
+        foreach (var layout in ClientLayout.Known)
+            if (layout.Fits(bytes, at)) return layout;
+        throw new FormatException("no known key layout (" + string.Join(", ", ClientLayout.Known.Select(l => l.Name)) +
+            ") matches the bytes around the SPKI");
     }
 
     public static byte[] EncodeVerifyKey(DsaKey key)

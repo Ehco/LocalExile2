@@ -230,7 +230,7 @@ static class AreaLayouts
     }
 
     // data/walkability/<id>_seed<seed>.bin (1 byte per cell) + .json {"w":..,"h":..}, written by scripts/walkmaps.
-    static byte[]? LoadCells(string id, uint seed, out int w, out int h)
+    public static byte[]? LoadCells(string id, uint seed, out int w, out int h)
     {
         (w, h) = (0, 0);
         string bin = $"{Folder}/{id}_seed{seed}.bin", meta = Path.ChangeExtension(bin, ".json");

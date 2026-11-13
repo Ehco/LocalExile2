@@ -277,7 +277,8 @@ def parse(text):
     toks = TOKEN.findall(re.sub(r"//[^\n]*", "", text))
     r = {"extends": [], "abstract": False, "sections": [], "client": [], "server": [], "version": None,
          "shared_states": [], "shared_timers": [], "transitionable": {}, "tags": [], "basic_actions": [],
-         "client_transitionable": {}, "client_targetable": None, "life": {}, "positioned": {}, "animated": {}}
+         "client_transitionable": {}, "client_targetable": None, "life": {}, "positioned": {}, "animated": {},
+         "quest_flag_states": []}
     i = 0
 
     def block(i):  # i at '{' -> index after matching '}', plus the names of sections directly inside
@@ -339,12 +340,13 @@ def parse(text):
 def state_machine(toks, r):
     """Networked StateMachine data (0x141e3ee40 reads it): `define_shared_state = "a; b = 2;"` -> [(a, 0), (b, 2)],
     `define_shared_timer = "t;"` -> [t]. Plain define_state / define_timer stay on the client. Only top-level
-    tokens of the section: nested blocks (event handlers) are skipped."""
+    tokens of the section: nested blocks (event handlers) are skipped. PoE2's define_shared_checkpoint_state is a
+    shared state too (CourtGuardZombie's "dead": the client reads one, PORTING-POE2.md wave 20)."""
     depth = 0
     for k, t in enumerate(toks):
         if t == "{": depth += 1
         elif t == "}": depth -= 1
-        elif depth == 0 and t in ("define_shared_state", "define_shared_timer") and k + 2 < len(toks) and toks[k + 1] == "=":
+        elif depth == 0 and t in ("define_shared_state", "define_shared_checkpoint_state", "define_shared_timer") and k + 2 < len(toks) and toks[k + 1] == "=":
             for item in toks[k + 2].strip("\"'").split(";"):
                 name, _, value = item.partition("=")
                 name = name.strip()
@@ -358,6 +360,12 @@ def state_machine(toks, r):
                     except ValueError:
                         v = 0
                     r["shared_states"].append([name, v])
+        # PoE2: per_player_quest_flag_state_<state>_<value> = "Flag" — the server sets the shared state to the value
+        # when the player has the quest flag (PORTING-POE2.md wave 27).
+        elif depth == 0 and t.startswith("per_player_quest_flag_state_") and k + 2 < len(toks) and toks[k + 1] == "=":
+            state, _, value = t[len("per_player_quest_flag_state_"):].rpartition("_")
+            if state and value.isdigit():
+                r["quest_flag_states"].append([state, int(value), toks[k + 2].strip("\"'")])
 
 
 def client_sections(toks, r):
@@ -452,6 +460,7 @@ def merge(type_path, files, otc, first=("Positioned",)):
             "animated_object": next((f["animated"]["animated_object"] for _, f in reversed(ch)
                                      if f and "animated_object" in f.get("animated", {})), None),
             "shared_states": [[k, v] for k, v in states.items()], "shared_timers": timers,
+            "quest_flag_states": [q for _, f in ch for q in (f or {}).get("quest_flag_states", [])],
             # The Actor's basic actions (ClientActor ctor 0x142192860 adds one skill per name, id = HASH16 & 0x3fff),
             # parents first: e.g. Monster.ot's Move, and "Emerge" for monsters that rise from the ground.
             "basic_actions": list(dict.fromkeys(a for _, f in ch for a in (f or {}).get("basic_actions", []))),

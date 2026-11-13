@@ -36,15 +36,105 @@ public sealed class LoginServerSession(AccountService accounts)
         EmptyMessage { MessageId: 0x18 } => [CharacterList()],
         // Play on the character screen sends 0x0e (u8 0, u32 0: character index?; captured 2026-10-16). It waits
         // ("Contacting Server...") for the instance assignment 0x14.
-        U8U32 m => EnterGame(m),
+        U8U32 m => EnterGame(m.Value, CharacterList),
         CreateCharacter m => Create(m),
         // Delete on the character screen, after its confirmation (0x140cfafa0): the character's name and a byte (0 live).
         WStringU8Message { MessageId: DeleteCharacterId } m => Delete(m.Text),
         // "Leagues with progress" (0x140d166a0): the leagues a character could migrate progress from. None here; the
         // client then shows "There are no available leagues to migrate progress from."
         EmptyMessage { MessageId: 0x19 } => Session is null ? [] : [new LeaguesWithProgress(0, [])],
+        // PoE2 (LoginDialect.Poe2, PORTING-POE2.md wave 15). The Steam client logs in with its ticket by itself.
+        TokenLoginPoe2 => SteamLogin(),
+        // The character list request carries the 0x04 record id; 0x15 must echo it or the client drops the list.
+        U32Message { MessageId: 0x18 } m => Session is null ? [] : [CharacterListPoe2(_poe2RecordId = m.Value)],
+        // Play: a byte and one pair per local player slot; the first pair's A is the character's index in the 0x15 list
+        // (0x1420e9ff0), its B the record id.
+        PlayPoe2 m => EnterGame(m.Pairs is [var first, ..] ? first.A : 0, () => CharacterListPoe2(_poe2RecordId), poe2: true),
+        CharacterDetailRequestPoe2 m => CharacterDetail(m),
+        CreateCharacterPoe2 m => CreatePoe2(m),
         _ => [],
     };
+
+    /// <summary>The account a PoE2 Steam login opens (Auth: Game_POE2_ACCOUNT); null refuses the login. Every Steam
+    /// ticket opens it: the ticket cannot be checked offline, so this suits a server for one player.</summary>
+    public string? SteamAccount { get; init; }
+
+    /// <summary>The character the Steam account gets when it has none, so the first login can press Play at once.</summary>
+    public string SteamCharacter { get; init; } = "Exile";
+
+    /// <summary>What a PoE2 character's screen shows it wearing (<see cref="CharacterPreviewPoe2"/>); null shows none.</summary>
+    public Func<Character, IReadOnlyList<VisibleItem>>? Poe2Preview { get; init; }
+
+    /// <summary>Called with what went wrong that the client cannot be told (GameServer.Auth: logs it).</summary>
+    public Action<string>? Notice { get; init; }
+
+    /// <summary>The u32 of the PoE2 0x04 (U32_10). The client keeps a login record under it and echoes it in 0x18; 0 is
+    /// the value tested live.</summary>
+    public const uint Poe2LoginRecordId = 0;
+
+    // The record id of the last 0x18, which every PoE2 0x15 must carry.
+    private uint _poe2RecordId = Poe2LoginRecordId;
+
+    private ILoginMessage[] SteamLogin()
+    {
+        var r = SteamAccount is null ? Result<Session>.Fail(AuthError.NotFound) : accounts.LoginTrusted(SteamAccount);
+        if (!r.Ok)
+        {
+            Failed = true;
+            return [new LoginResultPoe2(Poe2LoginRecordId, ResultAccountDoesNotExist, "", new byte[32], 0, 0, [])];
+        }
+        Session = r.Value;
+        Account = accounts.GetAccount(Session!.AccountId);
+        if (accounts.EnsureCharacter(Session.AccountId, SteamCharacter, CharacterClass.Witch) is { Ok: false } created)
+            Notice?.Invoke($"cannot create {SteamCharacter} for {Account!.Name} ({created.Error}): the character screen stays empty");
+        return [new LoginResultPoe2(Poe2LoginRecordId, ResultOk, "", new byte[32], FlagVerified, 0, []),
+                new LeagueListPoe2(DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                    [.. Poe2Leagues.Select(l => LeagueEntryPoe2.From(l.Entry()))], false, false)];
+    }
+
+    /// <summary>The leagues the PoE2 create screen offers: the Standard family without Ruthless, which PoE2 does not
+    /// have (Standard, Hardcore, SSF Standard, SSF Hardcore).</summary>
+    public IReadOnlyList<League> Poe2Leagues => [.. Leagues.All.Where(l =>
+        !l.Ruthless && string.Equals(l.Base, LeagueCatalog.Standard, StringComparison.OrdinalIgnoreCase))];
+
+    /// <summary>PoE2's 0x12: the class comes from its CharacterStartStates Id. The answer is PoE1's: the list, then
+    /// 0x13, after which the client presses Play on the new character by itself.</summary>
+    private ILoginMessage[] CreatePoe2(CreateCharacterPoe2 m)
+    {
+        if (Session is null) return [];
+        var league = Poe2Leagues.FirstOrDefault(l => string.Equals(l.Name, m.League, StringComparison.OrdinalIgnoreCase));
+        return Create(m.Name, league, Poe2Classes.ClassOfStartState(m.StartState),
+            result => new CreateCharacterResultPoe2(result, false, m.RecordId), () => CharacterListPoe2(_poe2RecordId));
+    }
+
+    /// <summary>The PoE2 0x15 for login record <paramref name="recordId"/>. The class byte is the PoE2 Characters.datc64
+    /// row (<see cref="Poe2ClassRow"/>); the blob is the selected character's preview, the pairs stay empty.</summary>
+    private CharacterListPoe2 CharacterListPoe2(uint recordId)
+    {
+        var characters = Session is null ? [] : accounts.Characters(Session.AccountId);
+        byte selected = LastPlayedIndex();
+        return new(recordId,
+            [.. characters.Select(c => new CharacterEntryPoe2(c.Name, c.League,
+                0, 0, (byte)Math.Clamp(c.Level, 0, 255), 0, Poe2ClassRow(c.Class), 0, 0, 0, 0, 0, 0))],
+            selected, (byte)Math.Clamp(accounts.MaxCharacters, 0, 255), 0, 0,
+            selected < characters.Count ? Preview(characters[selected]) : [], [], 0, 0);
+    }
+
+    /// <summary>The PoE2 0x11 for a character the screen selects: its preview, as 0x15 sends for its B28. The screen
+    /// caches the entry and stops asking. Nothing for another record or a missing index, which the client would drop.</summary>
+    private ILoginMessage[] CharacterDetail(CharacterDetailRequestPoe2 m)
+    {
+        if (Session is null || m.RecordId != _poe2RecordId) return [];
+        var characters = accounts.Characters(Session.AccountId);
+        if (m.Index >= characters.Count) return [];
+        return [new CharacterDetailPoe2(m.RecordId, m.Index, 0, 0, Preview(characters[m.Index]), [], 0, 0)];
+    }
+
+    private byte[] Preview(Character c) => Poe2Preview is null ? [] : CharacterPreviewPoe2.Blob(Poe2Preview(c));
+
+    /// <summary>The PoE2 Characters.datc64 row of a class (<see cref="Poe2Classes"/>). Row 3 showed "Duelist" live
+    /// (2026-11-03). PoE2 has no Scion: it gets the Witch.</summary>
+    public static byte Poe2ClassRow(CharacterClass cls) => Poe2Classes.Of(cls).Index;
 
     /// <summary>Where 0x14 sends the client: the instance (game) server, GameServer.Gateway.</summary>
     public string InstanceHost { get; init; } = "127.0.0.1";
@@ -60,15 +150,15 @@ public sealed class LoginServerSession(AccountService accounts)
     /// instance 0x0F. The 64 key bytes become the instance connection's Salsa20 key material (Agents/docs/re/010). Data8 goes
     /// into the 0x0E digest and stays zero.
     /// </summary>
-    private ILoginMessage[] EnterGame(U8U32 play)
+    private ILoginMessage[] EnterGame(uint index, Func<ILoginMessage> characterList, bool poe2 = false)
     {
         if (Session is null) return [];
         var characters = accounts.Characters(Session.AccountId);
         if (characters.Count == 0) return [];
         // The u32 is probably the character's index on the character screen (0 for the first, the only one tested).
-        var chosen = characters[(int)Math.Min(play.Value, (uint)characters.Count - 1)];
+        var chosen = characters[(int)Math.Min(index, (uint)characters.Count - 1)];
         if (!HardcoreDeathRules.CanEnter(chosen))
-            return [CharacterList(), new U16Message(0x0f, ResultLeagueDoesNotExist)];
+            return [characterList(), new U16Message(0x0f, ResultLeagueDoesNotExist)];
         // Last played now: the character screen selects it next time (CharacterList's B28).
         accounts.Touch(Session.AccountId, chosen.Id, chosen.AreaId);
         CharacterName = chosen.Name;
@@ -77,12 +167,10 @@ public sealed class LoginServerSession(AccountService accounts)
         CharacterClass = chosen.Class;
         CharacterLevel = chosen.Level;
         CharacterLastTown = chosen.LastTown;
-        if (Assign is not null)
-        {
-            var (area, assigned) = Assign(this);
-            return [InstanceAssignment(area, assigned)];
-        }
-        return [InstanceAssignment(0x235c, Keyring.NewTicket())];
+        var (area, ticket) = Assign is not null ? Assign(this) : ((ushort)0x235c, Keyring.NewTicket());
+        InstanceInfo assignment = InstanceAssignment(area, ticket);
+        // The PoE2 client's 0x14 has one more field (0.5.5f).
+        return [poe2 ? InstanceInfoPoe2.From(assignment) : assignment];
     }
 
     /// <summary>The character chosen with Play (0x0e), once in game.</summary>
@@ -187,28 +275,30 @@ public sealed class LoginServerSession(AccountService accounts)
     /// Create character (0x12) → 0x13 with the result; on success the new character list (0x15) goes first, and the
     /// client then enters the game with the new character (Play, 0x0e). The class comes from <see cref="ClassOf"/>.
     /// </summary>
-    private ILoginMessage[] Create(CreateCharacter m)
+    private ILoginMessage[] Create(CreateCharacter m) => Session is null ? [] : Create(m.Name, Leagues.Find(m.League),
+        ClassOf(m), result => new CreateCharacterResult(result, false), CharacterList);
+
+    private ILoginMessage[] Create(string rawName, League? league, CharacterClass? cls, Func<ushort, ILoginMessage> result,
+        Func<ILoginMessage> characterList)
     {
-        if (Session is null) return [];
-        var league = Leagues.Find(m.League);
-        if (league is null) return [new CreateCharacterResult(ResultLeagueDoesNotExist, false)];
-        if (ClassOf(m) is not { } cls) return [new CreateCharacterResult(ResultInvalidClass, false)];
-        string name = m.Name.Trim();
-        if (name.Length < 3) return [new CreateCharacterResult(ResultCharacterNameTooShort, false)];
-        if (name.Length > 23) return [new CreateCharacterResult(ResultCharacterNameTooLong, false)];
-        var r = accounts.CreateCharacter(Session.AccountId, name, cls, league.Name);
+        if (league is null) return [result(ResultLeagueDoesNotExist)];
+        if (cls is null) return [result(ResultInvalidClass)];
+        string name = rawName.Trim();
+        if (name.Length < 3) return [result(ResultCharacterNameTooShort)];
+        if (name.Length > 23) return [result(ResultCharacterNameTooLong)];
+        var r = accounts.CreateCharacter(Session!.AccountId, name, cls.Value, league.Name);
         if (!r.Ok)
-            return [new CreateCharacterResult(r.Error switch
+            return [result(r.Error switch
             {
                 AuthError.CharacterNameTaken => ResultCharacterNameTaken,
                 AuthError.LimitReached => ResultTooManyCharacters,
                 AuthError.InvalidClass => ResultInvalidClass,
                 _ => ResultCharacterNameInvalid,
-            }, false)];
+            })];
         // The list first: on 0 the create screen (0x140cf8010) looks the new character up by name in the character list
         // and sends Play (0x0e) with its index; with the list sent after 0x13 it was not there yet and the client waited
         // on "Contacting Server..." (live 2026-10-18).
-        return [CharacterList(), new CreateCharacterResult(ResultOk, false)];
+        return [characterList(), result(ResultOk)];
     }
 
     /// <summary>Characters.dat Id → class (CharacterClass is Characters.dat IntegerId).</summary>
@@ -232,7 +322,8 @@ public sealed class LoginServerSession(AccountService accounts)
     public static CharacterClass? ClassOf(CreateCharacter m)
     {
         if (ClassIds.TryGetValue(m.S78, out var c)) return c;
-        if (Enum.TryParse<CharacterClass>(m.S78, true, out c) && Enum.IsDefined(c)) return c;
+        // PoE1 has classes 0 to 6 only: PoE2's (Warrior on) are refused.
+        if (Enum.TryParse<CharacterClass>(m.S78, true, out c) && c is >= CharacterClass.Scion and <= CharacterClass.Shadow) return c;
         foreach (var (prefix, cls) in StartStatePrefixes)
             if (m.S78.StartsWith(prefix, StringComparison.Ordinal)) return cls;
         foreach (uint v in (ReadOnlySpan<uint>)[m.U50, m.U54])
