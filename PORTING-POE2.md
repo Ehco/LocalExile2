@@ -2534,3 +2534,52 @@ Not checked on 0.5.5f: the waypoint travel, death and resurrect, the gem
 window, flasks, inventory moves, the passive tree's own messages, pickups
 (an object was removed, `0x2fa`, without an error). They use ids below
 `0x2e9` or moved with the rest; none raised an error in these runs.
+
+## Wave 37 — the 2026-11-13 client: layout detection and the build fingerprint (2026-11-13)
+
+Steam pushed two more clients after 0.5.5f. On 2026-11-13 the installed
+`PathOfExileSteam.exe` was 78,441,304 bytes (sha256 `2a410fbd…`, the 0.5.5e key
+order) and then, after a second update that afternoon, 78,442,328 bytes
+(sha256 `37f3268e…`, the **0.5.5f** key order; Steam build id 26579160 →
+26650308). Neither is 0.5.5f's recorded image (78,440,792 bytes,
+`7e0d3665…`), so this project has no name for them yet; the fingerprint says
+"unrecognised build" and the layout is left to the heuristics.
+
+**The bug.** `ClientLayout.Known` was tried in the order [PoE1 3.29.3b, PoE2
+0.5.5e, PoE2 0.5.5f] and the first fit won. The PoE1 layout constrains nothing
+but the subgroup of the value at `+0x4d0` and the non-zeroness of the one at
+`+0x350`; a 0.5.5f-shaped image satisfies both, because `+0x350` holds a
+full-size value (3071 bits) and `+0x4d0` a valid subgroup element. The 0.5.5e
+image escaped only by luck: its `+0x4d0` blob was 3008 bits, exactly the
+"full size" cutoff. So on the updated client `patch` reported
+"PoE1 3.29.3b", wrote the new server static public into the decoy slot at
+`+0x4d0` (383 bytes changed there instead of at `-0x300`) and produced a
+client that cannot complete the handshake — with exit code 0 and no warning.
+
+**The fix.**
+- `ClientLayout.Known` is ordered **most specific first** (0.5.5f, 0.5.5e,
+  PoE1): a layout that pins the size of the client static private must beat
+  one that does not.
+- `ClientImage.DetectAll` returns every layout that fits; `probe` prints the
+  tie and names the one it used.
+- `--layout "<name>"` forces one; spaces and dots are optional (`poe2055f`).
+- `ClientImage.Fingerprint` prints size + sha256 and names the build when it
+  is known, else says "unrecognised build (layout detected by heuristic)".
+- `patch` calls `VerifyPatched` before writing: the patched bytes must
+  re-detect the same layout and carry both new values, so a wrong-offset
+  patch fails loudly instead of shipping.
+- `tests/GameServer.Core.Tests/ClientLayoutDetectionTests.cs` pins all of it,
+  including the tie itself (both layouts fit, the specific one wins) and that
+  the PoE1 decoy blobs are left untouched.
+
+**Verified on the 2026-11-13 image:** `probe` → "2 layouts fit these bytes
+(PoE2 0.5.5f, PoE1 3.29.3b) — taking the most specific, PoE2 0.5.5f";
+`keygen` reads the client static private at `-0x180`; `patch` changes 638
+bytes, all inside the verify key and the `-0x300` server static public, and
+verifies.
+
+**Not done.** Nothing else is checked against this build. Every message id,
+layout and address in this file is 0.5.5e's (0.5.5f moved the world group by 3,
+wave 36); the wire-id shifts for the 2026-11-13 client are **not** derived —
+`Game_POE2_ID_SHIFTS` overrides the table when they are. The data generators
+have not been rerun on its bundles, and the patched exe has not been started.

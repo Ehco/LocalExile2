@@ -4,7 +4,9 @@ Read this first if you are picking up the PoE2 work. It covers where things stan
 from nothing, how to run a live test, and what to do next. The wave-by-wave findings (addresses, message layouts,
 live results) are in [PORTING-POE2.md](PORTING-POE2.md). This file points into it and does not repeat it.
 
-Last updated 2026-11-10. **The game is now 0.5.5f, and it is served again.** Steam replaced 0.5.5e on 2026-11-06 and
+Last updated 2026-11-13 (wave 37). **Steam pushed another client that day** (78,442,328 bytes, sha256 `37f3268e…`, Steam build 26650308); its key order is still 0.5.5f's. Wave 37 fixes the layout detection that called it PoE1 and patched the wrong offsets, adds `--layout` and a build fingerprint, and makes `patch` verify what it wrote — but **nothing else is checked against this build**: every message id and address below is 0.5.5e's.
+
+**Where the 0.5.5f work left it (2026-11-10).** Steam replaced 0.5.5e on 2026-11-06 and
 the 0.5.5e client no longer starts on the updated data. Waves 34 to 36 (PORTING-POE2.md) ported what changed: the key
 layout in the exe, the login's `0x14`, the instance ids (everything from `0x2f1` up is 3 higher on the wire; the code
 keeps 0.5.5e's ids and `Poe2WireIds` translates) and `0x29`. Seen live on 0.5.5f: login, the camp, NPCs, the walk,

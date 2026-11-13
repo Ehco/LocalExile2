@@ -79,9 +79,27 @@ public sealed record ClientLayout(
     /// private (PORTING-POE2.md, wave 34). What follows the SPKI is unrelated data.</summary>
     public static readonly ClientLayout Poe2_055f = new("PoE2 0.5.5f", 0x346, -0x180, -0x300, 384, ShortExponentBits);
 
-    /// <summary>Every layout <see cref="ClientImage.Detect"/> tries, in order. A PoE2 layout never fits another PoE2
-    /// build's image (the exponent's size settles it); PoE1 against PoE2 rests on the subgroup check alone.</summary>
-    public static IReadOnlyList<ClientLayout> Known { get; } = [Poe1_3293b, Poe2_055e, Poe2_055f];
+    /// <summary>Every layout <see cref="ClientImage.Detect"/> tries, <b>most specific first</b>.
+    /// Order matters: the PoE2 layouts constrain the size of the client static private (a crypto++ short
+    /// exponent), while <see cref="Poe1_3293b"/> constrains nothing but the subgroup of the public value. A weaker
+    /// PoE2-era image therefore satisfies both, and a first-match scan returns PoE1 — which patches the wrong
+    /// offsets and silently corrupts the client (seen on the 2026-11-13 client: the PoE1 layout fitted, the 0.5.5f
+    /// layout was the right one). The most specific fit wins; everything that fits is reported by
+    /// <see cref="ClientImage.DetectAll"/> so <c>probe</c> can show the tie.</summary>
+    public static IReadOnlyList<ClientLayout> Known { get; } =
+        [Poe2_055f, Poe2_055e, Poe1_3293b];
+
+    /// <summary>The layout with this display name (spaces optional, case-insensitive); for <c>--layout</c>.</summary>
+    public static ClientLayout ByName(string name)
+    {
+        var wanted = Normalize(name);
+        return Known.FirstOrDefault(l => string.Equals(Normalize(l.Name), wanted, StringComparison.OrdinalIgnoreCase))
+               ?? throw new FormatException($"unknown layout '{name}' (known: {string.Join(", ", Known.Select(l => l.Name))})");
+    }
+
+    // "PoE2 0.5.5f", "poe2 0.5.5f" and "PoE2055f" are the same layout name on a command line.
+    private static string Normalize(string name) =>
+        name.Replace(" ", "", StringComparison.Ordinal).Replace(".", "", StringComparison.Ordinal);
 
     /// <summary>True when the blobs this layout places around the SPKI at <paramref name="spkiOffset"/> are what it
     /// says: a full-size subgroup element for the server static public, and a non-zero exponent of the expected
@@ -167,23 +185,67 @@ public sealed class ClientImage
         Big.ToFixed(keys.ServerStaticPublic, _layout.StaticLength).CopyTo(_bytes, Offset + sso);
     }
 
+    /// <summary>Re-reads the bytes this image wrote and fails unless the patched file still detects the same
+    /// layout and carries exactly the keys we meant to put there. Cheap, and it turns a silent bad patch
+    /// (wrong offsets, wrong build) into a hard error.</summary>
+    public void VerifyPatched(LoginServerKeys keys)
+    {
+        var after = new ClientImage(_bytes);
+        if (!ReferenceEquals(after.Layout, _layout))
+            throw new InvalidOperationException($"patched image detects as {after.Layout.Name}, not {_layout.Name}");
+        if (after.ReadVerifyKey().Y != keys.Signing.Y)
+            throw new InvalidOperationException("patched image does not carry the new DSA y");
+        if (after.ReadServerStaticPublic() != keys.ServerStaticPublic)
+            throw new InvalidOperationException("patched image does not carry the new server static public");
+    }
+
+    /// <summary>Size + SHA-256 of a client executable, matched against the builds this project has seen.</summary>
+    public sealed record Fingerprint(long Size, string Sha256, string? Build)
+    {
+        /// <summary>Builds the project has actually identified (see PORTING-POE2.md). An unknown build is not an
+        /// error — Steam ships new patches that keep a known key layout — but it is worth saying out loud.</summary>
+        public static IReadOnlyList<Fingerprint> Known { get; } =
+        [
+            new(78_440_792, "7e0d36655e6e788202d2d588429c45064bbf87caec95938ebb19a317947c834e", "PoE2 0.5.5f"),
+        ];
+
+        public static Fingerprint Of(byte[] image)
+        {
+            string sha = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(image));
+            return new(image.LongLength, sha, Known.FirstOrDefault(k => k.Size == image.LongLength && k.Sha256 == sha)?.Build);
+        }
+
+        public override string ToString() =>
+            Build is null
+                ? $"{Size:n0} bytes, sha256 {Sha256[..16]}… — unrecognised build (layout detected by heuristic)"
+                : $"{Build} ({Size:n0} bytes, sha256 {Sha256[..16]}…)";
+    }
+
     private byte[] StaticBlob(int? relativeOffset, string what) =>
         relativeOffset is int off
             ? _bytes.AsSpan(Offset + off, _layout.StaticLength).ToArray()
             : throw new NotSupportedException($"{what} location not yet mapped for this client (see PORTING-POE2.md)");
 
-    /// <summary>Loads a client image and auto-detects its key layout.</summary>
-    public static ClientImage Load(byte[] bytes) => new(bytes, Detect(bytes));
+    /// <summary>Loads a client image and auto-detects its key layout; <paramref name="layoutName"/> forces one
+    /// (<c>--layout "PoE2 0.5.5f"</c>) when the operator knows better than the heuristics.</summary>
+    public static ClientImage Load(byte[] bytes, string? layoutName = null) =>
+        new(bytes, layoutName is null ? Detect(bytes) : ClientLayout.ByName(layoutName));
 
-    /// <summary>Picks the layout whose key placement checks out against the bytes around the SPKI.</summary>
-    public static ClientLayout Detect(byte[] bytes)
+    /// <summary>Picks the layout whose key placement checks out against the bytes around the SPKI.
+    /// <see cref="ClientLayout.Known"/> is ordered most specific first, so a PoE2 match never loses to PoE1's
+    /// looser test (see the note on <see cref="ClientLayout.Known"/>).</summary>
+    public static ClientLayout Detect(byte[] bytes) => DetectAll(bytes)[0];
+
+    /// <summary>Every layout that fits these bytes, most specific first. Empty when none fits.</summary>
+    public static IReadOnlyList<ClientLayout> DetectAll(byte[] bytes)
     {
         int at = bytes.AsSpan().IndexOf(DerPrefix);
         if (at < 0) throw new FormatException("login verify key not found in client image");
-        foreach (var layout in ClientLayout.Known)
-            if (layout.Fits(bytes, at)) return layout;
-        throw new FormatException("no known key layout (" + string.Join(", ", ClientLayout.Known.Select(l => l.Name)) +
-            ") matches the bytes around the SPKI");
+        var fits = ClientLayout.Known.Where(l => l.Fits(bytes, at)).ToList();
+        if (fits.Count == 0)
+            throw new FormatException("no known key layout (" + string.Join(", ", ClientLayout.Known.Select(l => l.Name)) +
+                ") matches the bytes around the SPKI");
+        return fits;
     }
 
     public static byte[] EncodeVerifyKey(DsaKey key)
