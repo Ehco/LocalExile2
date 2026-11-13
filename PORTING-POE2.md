@@ -2583,3 +2583,42 @@ layout and address in this file is 0.5.5e's (0.5.5f moved the world group by 3,
 wave 36); the wire-id shifts for the 2026-11-13 client are **not** derived —
 `Game_POE2_ID_SHIFTS` overrides the table when they are. The data generators
 have not been rerun on its bundles, and the patched exe has not been started.
+
+## Wave 38 — items can no longer be destroyed by a bad move, and one bad message no longer ends the session (2026-11-13)
+
+Audit of the item and message paths (three analysts over wave 36's code) turned up two ways a player
+loses an item, and two ways one malformed message freezes or drops the client. All four are fixed, and
+the item ones are pinned by regression tests that failed against the shipped code.
+
+**The item losses.** `Place` returns the item a swap pushes out (`Displaced`) *or* the part of the held
+stack that did not fit (`Rest`) — never both — but `PlaceItem` restored them with an `else if`. A
+shift-place (`One`) of a stack onto a different item's cell is the one case that needs both: the item
+being swapped out *and* the `StackSize - 1` left behind. The second was silently dropped: five scrolls
+shift-placed onto a transmute became one in the grid, one held, and **three gone**. Separately,
+`PickUpItem` removed the item from its inventory *before* asking the cursor to take it, so an item too
+big for the 4x4 cursor was destroyed by the removal alone (the add returned null and the change message
+for the removal had already been built).
+
+Both are now lossless by construction rather than by rollback: `Poe2Inventory.Overlaps` peeks at the
+cell read-only, `Poe2Inventory.CanHold` answers whether the cursor can take back *everything* a move
+would hand it (ignoring the entry that is about to leave), and both moves check that **before anything
+moves** — a move that could not be undone is simply refused, and the client keeps what it has. The two
+restores afterwards are independent, not `else if`. A pick up also checks `FreeCell` before the
+inventory changes.
+
+**The frozen sessions.** `Program.Poe2.cs` dispatched client messages and ran the 33 ms frame tick with
+no exception isolation: one exception out of `session.Handle` closed the connection, and one out of
+`Tick` ended the frame task silently, so the client stopped receiving `0x2f5` with nothing in the log.
+Both are now `try`/`catch` per message and per frame — the exception is logged with the message id and
+the loop continues. Socket/IO/`OperationCanceledException` still propagate, so a dead connection ends
+the loop as before.
+
+**Proof.** `InstanceItemsPoe2Tests` gained two regressions written against the old code and failing on
+it: a pick up the cursor cannot hold leaves the item in its inventory (`Empty` reply, item still there,
+nothing held), and a shift-place that swaps keeps the rest of the stack (four inventory changes, the
+swapped item held, and all five scrolls still countable after both are placed back). Both now pass;
+`GameServer.Core.Tests` 779/779, `GameServer.Data.Tests` 34/34, build clean.
+
+**Not done.** Nothing here was tried against the live client — these are offline-verified semantics
+only. Still unvalidated on the 2026-11-13 build: every message id and address (see wave 37), the
+`0x39`/`0x38` ids this wave's tests drive assumed unchanged, and the cursor's 4x4 size.

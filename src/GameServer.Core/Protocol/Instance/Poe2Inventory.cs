@@ -14,6 +14,8 @@ public sealed class Poe2Inventory(uint inventoryId, byte width, byte height)
     private uint _nextId = 1;
 
     public uint InventoryId => inventoryId;
+    public byte Width => width;
+    public byte Height => height;
     public IReadOnlyList<Entry> Items => _items;
 
     /// <summary>
@@ -120,6 +122,33 @@ public sealed class Poe2Inventory(uint inventoryId, byte width, byte height)
         var placed = new Entry(_nextId++, x, y, itemWidth, itemHeight, maxStack, item);
         _items.Add(placed);
         return new(InstanceInventoriesPoe2.InventoryChange(inventoryId, ++_revision, [other.Id], [new InventoryItem(placed.Id, x, y, item)]), other);
+    }
+
+    /// <summary>The entries a placement at this cell would land on (empty, one for a merge or a swap, or more when
+    /// the cell is refused). Read-only: nothing moves.</summary>
+    public IReadOnlyList<Entry> Overlaps(byte x, byte y, byte itemWidth, byte itemHeight) =>
+        Overlapping(x, y, itemWidth, itemHeight).ToList();
+
+    /// <summary>Whether these items, in this order, would fit in the free cells right now (first free cell row by row,
+    /// as <see cref="Add"/> places them). <paramref name="leaving"/> is an entry to treat as already gone — the cursor
+    /// item a move is about to take out. Used to check what a move must hand back BEFORE anything moves, so a move can
+    /// never destroy an item it cannot carry.</summary>
+    public bool CanHold(Entry? leaving, params (byte Width, byte Height)[] items)
+    {
+        var taken = _items.Where(e => !ReferenceEquals(e, leaving))
+            .Select(e => (X: (int)e.X, Y: (int)e.Y, W: (int)e.Width, H: (int)e.Height)).ToList();
+        foreach (var (w, h) in items)
+        {
+            bool placed = false;
+            for (int y = 0; y + h <= height && !placed; y++)
+                for (int x = 0; x + w <= width && !placed; x++)
+                {
+                    bool clash = taken.Any(t => x < t.X + t.W && t.X < x + w && y < t.Y + t.H && t.Y < y + h);
+                    if (!clash) { taken.Add((x, y, w, h)); placed = true; }
+                }
+            if (!placed) return false;
+        }
+        return true;
     }
 
     private IEnumerable<Entry> Overlapping(int x, int y, int itemWidth, int itemHeight) =>

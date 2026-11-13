@@ -58,30 +58,52 @@ public sealed partial class InstanceSessionPoe2
         id == _mainInventory.InventoryId ? _mainInventory : id == _cursor.InventoryId ? _cursor : null;
 
     // C→S 0x39: the item leaves its inventory for the cursor (0xde to each). Nothing goes out for an unknown inventory
-    // or item, or with a hand already full: the client then keeps what it has.
+    // or item, or with a hand already full: the client then keeps what it has. The cursor's room is checked before the
+    // item leaves its inventory, so a pick up can never destroy an item the cursor cannot carry (wave 37 follow-up).
     private IReadOnlyList<byte[]> PickUpItem(InstanceItemsPoe2.PickUp pick)
     {
         if (InventoryOf(pick.InventoryId) is not { } from || from == _cursor || _cursor.Items.Count > 0) return [];
-        if (from.Find(pick.ItemId) is not { } entry || from.Remove(pick.ItemId) is not { } removed) return [];
-        var held = _cursor.Add(entry.Item, entry.Width, entry.Height, 1);
+        if (from.Find(pick.ItemId) is not { } entry || _cursor.FreeCell(entry.Width, entry.Height) is null) return [];
+        if (from.Remove(pick.ItemId) is not { } removed) return [];
+        if (_cursor.Add(entry.Item, entry.Width, entry.Height, 1) is not { } held)
+            return from.Restore(entry.Item, entry.Width, entry.Height, entry.X, entry.Y) is { } back
+                ? [removed, back] : [removed];   // unreachable after the FreeCell check; keeps the item anyway
         ItemsChanged();
-        return held is null ? [removed] : [removed, held];
+        return [removed, held];
     }
 
     // C→S 0x38: the held item goes to the cell clicked: into a free place, onto a stack of its type (what does not fit
     // stays held), or in exchange for the item there (now held). With Shift, one of the held stack.
+    // Everything the cursor has to take back — the item a swap pushes out AND/OR the rest of the stack — is checked to
+    // fit before anything moves, and both are restored independently: a shift-place that swapped used to drop the rest
+    // of the held stack (wave 37 follow-up).
     private IReadOnlyList<byte[]> PlaceItem(InstanceItemsPoe2.Place place)
     {
         if (_cursor.Items.FirstOrDefault() is not { } held || InventoryOf(place.InventoryId) is not { } into || into == _cursor) return [];
-        var type = _itemTypesByHash.GetValueOrDefault(held.Item.TypeHash);
-        var put = place.One && held.Item.StackSize > 1 ? held.Item with { StackSize = 1 } : held.Item;
         if (place.X > byte.MaxValue || place.Y > byte.MaxValue
-            || into.Place(put, held.Width, held.Height, (byte)place.X, (byte)place.Y, type?.MaxStack ?? 1) is not { } done) return [];
-        var messages = new List<byte[]> { done.Change };
+            || place.X + held.Width > into.Width || place.Y + held.Height > into.Height) return [];
+        var type = _itemTypesByHash.GetValueOrDefault(held.Item.TypeHash);
+        int maxStack = type?.MaxStack ?? 1;
+        var put = place.One && held.Item.StackSize > 1 ? held.Item with { StackSize = 1 } : held.Item;
+        var over = into.Overlaps((byte)place.X, (byte)place.Y, held.Width, held.Height);
+        if (over.Count > 1) return [];
+        // a stack of its own type with room is merged into; anything else is swapped out
+        bool merges = over.Count == 1 && over[0].Item.TypeHash == held.Item.TypeHash
+            && maxStack > 1 && over[0].Item.StackSize < maxStack;
+        var back = new List<(byte Width, byte Height)>();
+        if (held.Item.StackSize > 1 || place.One) back.Add((held.Width, held.Height));        // the stack, whole or in part
+        if (over.Count == 1 && !merges) back.Add((over[0].Width, over[0].Height));            // the item a swap pushes out
+        if (!_cursor.CanHold(held, [.. back])) return [];
+        if (_cursor.Remove(held.Id) is not { } gone) return [];
+        if (into.Place(put, held.Width, held.Height, (byte)place.X, (byte)place.Y, maxStack) is not { } done)
+            return _cursor.Add(held.Item, held.Width, held.Height, 1) is { } undone ? [gone, undone] : [gone];
+
+        var messages = new List<byte[]> { done.Change, gone };
+        if (done.Displaced is { } displaced && _cursor.Add(displaced.Item, displaced.Width, displaced.Height, 1) is { } swapped)
+            messages.Add(swapped);
         int left = (place.One && held.Item.StackSize > 1 ? held.Item.StackSize - 1 : 0) + (done.Rest?.StackSize ?? 0);
-        if (_cursor.Remove(held.Id) is { } gone) messages.Add(gone);
-        if (done.Displaced is { } displaced && _cursor.Add(displaced.Item, displaced.Width, displaced.Height, 1) is { } swapped) messages.Add(swapped);
-        else if (left > 0 && _cursor.Add(held.Item with { StackSize = (ushort)left }, held.Width, held.Height, 1) is { } rest) messages.Add(rest);
+        if (left > 0 && _cursor.Add(held.Item with { StackSize = (ushort)left }, held.Width, held.Height, 1) is { } rest)
+            messages.Add(rest);
         ItemsChanged();
         return messages;
     }
