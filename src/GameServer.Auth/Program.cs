@@ -8,6 +8,8 @@ using GameServer.Storage;
 // GameServer.Auth — the login server the official client talks to (custom TCP, see Agents/docs/re/007 and 008).
 //   keygen <Game.exe> [keys.json]          new signing + static keys over the client's own DSA domain
 //   patch  <Game.exe> <out.exe> [keys.json] write a copy of the client that trusts those keys
+//   probe  <Game.exe>                      report the build fingerprint and the key layout that fits it
+// Add --layout "PoE2 0.5.5f" to probe/keygen/patch to force a layout when the heuristics are ambiguous.
 //   passwd <account> <password>            set a dev account's password (any length; restart Auth afterwards)
 //   [serve] [keys.json]                    accept logins: 0x0002 key exchange, then answer account login 0x03 with 0x04
 //                                          and log every decoded message (Agents/docs/re/009)
@@ -21,6 +23,11 @@ using GameServer.Storage;
 
 const string DefaultKeys = "data/login-keys.json";
 string cmd = args.Length > 0 ? args[0] : "serve";
+static string? LayoutArg(string[] a)
+{
+    int i = Array.IndexOf(a, "--layout");
+    return i >= 0 && i + 1 < a.Length ? a[i + 1] : null;
+}
 
 try
 {
@@ -38,7 +45,9 @@ switch (cmd)
     {
         string outPath = args.Length > 2 ? args[2] : DefaultKeys;
         if (File.Exists(outPath)) { Console.Error.WriteLine($"[auth] {outPath} exists; delete it to regenerate."); return 1; }
-        var image = ClientImage.Load(File.ReadAllBytes(args[1]));
+        byte[] bytes = File.ReadAllBytes(args[1]);
+        Console.WriteLine($"[auth] {ClientImage.Fingerprint.Of(bytes)}");
+        var image = ClientImage.Load(bytes, LayoutArg(args));
         Console.WriteLine($"[auth] {image.Layout.Name}: login key blobs at file offset 0x{image.Offset:x}");
         var keys = LoginServerKeys.Generate(image);
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outPath))!);
@@ -48,7 +57,14 @@ switch (cmd)
     }
     case "probe" when args.Length >= 2:
     {
-        var image = ClientImage.Load(File.ReadAllBytes(args[1]));
+        byte[] bytes = File.ReadAllBytes(args[1]);
+        Console.WriteLine($"[auth] {ClientImage.Fingerprint.Of(bytes)}");
+        var fits = ClientImage.DetectAll(bytes);
+        Console.WriteLine(fits.Count > 1
+            ? $"[auth] {fits.Count} layouts fit these bytes ({string.Join(", ", fits.Select(l => l.Name))}) — " +
+              $"taking the most specific, {fits[0].Name}; pass --layout to override"
+            : $"[auth] key layout: {fits[0].Name}");
+        var image = ClientImage.Load(bytes, LayoutArg(args));
         var key = image.ReadVerifyKey();
         Console.WriteLine($"[auth] {image.Layout.Name}: SPKI at file offset 0x{image.Offset:x}, " +
             $"DSA p {key.P.GetBitLength()} bits, q {key.Q.GetBitLength()} bits, y {key.Y.GetBitLength()} bits");
@@ -71,18 +87,21 @@ switch (cmd)
         if (Path.GetFullPath(args[1]).Equals(Path.GetFullPath(args[2]), StringComparison.OrdinalIgnoreCase))
         { Console.Error.WriteLine("[auth] refusing to overwrite the input; give a different output path."); return 1; }
         var keys = LoginServerKeys.FromJson(File.ReadAllText(args.Length > 3 ? args[3] : DefaultKeys));
-        var image = ClientImage.Load(File.ReadAllBytes(args[1]));
+        byte[] bytes = File.ReadAllBytes(args[1]);
+        Console.WriteLine($"[auth] {ClientImage.Fingerprint.Of(bytes)}");
+        var image = ClientImage.Load(bytes, LayoutArg(args));
         Console.WriteLine($"[auth] {image.Layout.Name}: login key blobs at file offset 0x{image.Offset:x}");
         image.Patch(keys);
+        image.VerifyPatched(keys);
         File.WriteAllBytes(args[2], image.Bytes);
-        Console.WriteLine($"[auth] wrote {args[2]}");
+        Console.WriteLine($"[auth] wrote {args[2]} (verified: {image.Layout.Name} layout re-detected, keys match)");
         return 0;
     }
     case "serve":
         await Serve(LoginServerKeys.FromJson(File.ReadAllText(args.Length > 1 ? args[1] : DefaultKeys)));
         return 0;
     default:
-        Console.Error.WriteLine("usage: GameServer.Auth probe <Game.exe> | keygen <Game.exe> [keys.json] | patch <Game.exe> <out.exe> [keys.json] | passwd <account> <password> | serve [keys.json]");
+        Console.Error.WriteLine("usage: GameServer.Auth probe <Game.exe> | keygen <Game.exe> [keys.json] | patch <Game.exe> <out.exe> [keys.json] | passwd <account> <password> | serve [keys.json]   (probe/keygen/patch take --layout \"<name>\")");
         return 2;
 }
 }
